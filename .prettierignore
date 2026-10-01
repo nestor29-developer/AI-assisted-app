@@ -4,3 +4,4 @@ coverage
 drizzle
 package-lock.json
 infra/terraform/.terraform
+__snapshots__

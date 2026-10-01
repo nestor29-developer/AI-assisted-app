@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError, loadConfig } from './env';
+import { ConfigError, loadConfig, loadDatabaseConfig } from './env';
 
 const valid = {
   JWT_SECRET: 'x'.repeat(32),
@@ -29,7 +29,7 @@ describe('loadConfig', () => {
     expect(config.auth.cookieSecure).toBe(false);
     expect(config.limits.maxUploadBytes).toBe(10 * 1024 * 1024);
     expect(config.policy.injectionPolicy).toBe('flag');
-    expect(config.database).toMatchObject({ kind: 'url', poolMax: 10, ssl: false });
+    expect(config.database).toMatchObject({ kind: 'url', poolMax: 5, ssl: false });
   });
 
   it('treats blank values like unset ones (as in a copied .env.example)', () => {
@@ -101,5 +101,80 @@ describe('loadConfig', () => {
     expect(failure({ ...placeholder, NODE_ENV: 'production' }).problems.join()).toContain(
       'JWT_SECRET',
     );
+  });
+});
+
+describe('loadDatabaseConfig', () => {
+  it('needs only database variables (a migration task has no JWT secret)', () => {
+    expect(loadDatabaseConfig({ DATABASE_URL: valid.DATABASE_URL })).toMatchObject({ kind: 'url' });
+  });
+
+  it('fails clearly when no database is configured', () => {
+    expect(() => loadDatabaseConfig({})).toThrow(/DATABASE_URL/);
+  });
+});
+
+// Built at runtime (96 chars, 36 distinct) so no random-looking literal sits in the repo for scanners.
+const STRONG_TEST_SECRET = Array.from(
+  { length: 48 },
+  (_, i) => String.fromCharCode(65 + (i % 26)) + (i % 10),
+).join('');
+
+describe('production rules', () => {
+  const production = {
+    ...valid,
+    NODE_ENV: 'production',
+    APP_ORIGIN: 'https://app.example.com',
+    TRUSTED_PROXY_HOPS: '1',
+    JWT_SECRET: STRONG_TEST_SECRET,
+  };
+
+  it('accepts a proper HTTPS deployment behind one proxy', () => {
+    const config = loadConfig(production);
+    expect(config.auth.cookieSecure).toBe(true);
+    expect(config.trustedProxyHops).toBe(1);
+  });
+
+  it('accepts the all-localhost demo used by docker compose, without a proxy', () => {
+    const demo = {
+      ...production,
+      APP_ORIGIN: 'http://localhost:3100',
+      TRUSTED_PROXY_HOPS: undefined,
+    };
+    expect(loadConfig(demo).auth.cookieSecure).toBe(false);
+  });
+
+  it.each([
+    ['plain http on a public host', 'http://app.example.com'],
+    [
+      'https mixed with localhost (would issue a shadowable non-Secure cookie)',
+      'https://app.example.com,http://localhost:3000',
+    ],
+  ])('rejects %s', (_label, origin) => {
+    expect(failure({ ...production, APP_ORIGIN: origin }).problems.join()).toContain('APP_ORIGIN');
+  });
+
+  it('requires trusted proxy hops for a public deployment (otherwise one shared rate-limit bucket)', () => {
+    expect(failure({ ...production, TRUSTED_PROXY_HOPS: '0' }).problems.join()).toContain(
+      'TRUSTED_PROXY_HOPS',
+    );
+  });
+
+  it.each([
+    ['a repeated character', 'a'.repeat(64)],
+    ['too short for 256 bits', STRONG_TEST_SECRET.slice(0, 32)],
+    ['low variety', 'ab'.repeat(30)],
+  ])('rejects a weak JWT secret: %s', (_label, secret) => {
+    expect(failure({ ...production, JWT_SECRET: secret }).problems.join()).toContain('JWT_SECRET');
+  });
+
+  it('does not apply these rules outside production', () => {
+    expect(() => loadConfig({ ...valid, APP_ORIGIN: 'http://app.example.com' })).not.toThrow();
+  });
+
+  it('never echoes credentials embedded in an origin', () => {
+    const message = failure({ ...valid, APP_ORIGIN: 'ftp://admin:hunter2@example.com' }).message;
+    expect(message).toContain('APP_ORIGIN');
+    expect(message).not.toContain('hunter2');
   });
 });

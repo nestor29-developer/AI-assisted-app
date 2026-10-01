@@ -148,11 +148,36 @@ export class InternalError extends AppError {
   }
 }
 
-/** Maps any thrown value to an AppError; unknown errors are logged, never returned. */
+/** Unknown errors become a generic 500 (logged, never returned); a stray ZodError is a bug, not a 400. */
 export function normalizeError(error: unknown): AppError {
-  if (error instanceof AppError) return error;
-  if (error instanceof z.ZodError) return new ValidationError(zodIssuesToValidationIssues(error));
-  return new InternalError(error);
+  return error instanceof AppError ? error : new InternalError(error);
+}
+
+export interface LoggableError {
+  readonly type: string;
+  readonly message: string;
+  readonly code?: string;
+  readonly stack?: string;
+}
+
+/** Log the root cause only: Drizzle's wrapper message embeds bound parameters such as emails and hashes. */
+export function toLoggableError(error: unknown): LoggableError {
+  let root: unknown = error;
+  for (let depth = 0; depth < 5; depth += 1) {
+    const cause =
+      typeof root === 'object' && root !== null && 'cause' in root ? root.cause : undefined;
+    if (cause === undefined || cause === null) break;
+    root = cause;
+  }
+  if (!(root instanceof Error)) return { type: typeof root, message: String(root).slice(0, 500) };
+
+  const code = 'code' in root && typeof root.code === 'string' ? root.code : undefined;
+  return {
+    type: root.name,
+    message: root.message.slice(0, 1_000),
+    ...(code === undefined ? {} : { code }),
+    ...(root.stack === undefined ? {} : { stack: root.stack }),
+  };
 }
 
 export function zodIssuesToValidationIssues(error: z.ZodError): ValidationIssue[] {
@@ -166,4 +191,14 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${+(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes >= 1024) return `${+(bytes / 1024).toFixed(1)} KB`;
   return `${bytes} bytes`;
+}
+
+/** Load shedding: the server is saturated, so say so quickly instead of queueing without limit. */
+export class ServiceBusyError extends AppError {
+  constructor(retryAfterSeconds = 2) {
+    super('SERVICE_BUSY', 503, 'Service busy', {
+      detail: 'The server is handling a lot of requests right now. Please try again shortly.',
+      retryAfterSeconds,
+    });
+  }
 }

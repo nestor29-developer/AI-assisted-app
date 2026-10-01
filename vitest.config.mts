@@ -1,17 +1,13 @@
-import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+import { alias } from './vitest.shared.mjs';
+
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-      // `server-only` throws when imported outside a React Server environment; tests run in plain Node.
-      'server-only': fileURLToPath(new URL('./src/test/stubs/server-only.ts', import.meta.url)),
-    },
-  },
+  resolve: { alias },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
+    exclude: ['**/*.integration.test.ts', '**/node_modules/**'],
     restoreMocks: true,
   },
 });

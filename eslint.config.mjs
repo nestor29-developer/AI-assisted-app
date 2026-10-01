@@ -31,7 +31,7 @@ const eslintConfig = defineConfig([
   {
     // Config vs code: process.env is read in exactly one module, the rest take typed config.
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/server/core/config/**', 'src/instrumentation.ts'],
+    ignores: ['src/server/core/config/**', 'src/instrumentation.ts', 'src/test/**'],
     rules: {
       'no-restricted-syntax': [
         'error',

@@ -18,6 +18,7 @@ export const ERROR_CODES = [
   'QUOTA_EXCEEDED',
   'TOO_MANY_CONCURRENT_REQUESTS',
   'AI_UNAVAILABLE',
+  'SERVICE_BUSY',
   'INTERNAL',
 ] as const;
 

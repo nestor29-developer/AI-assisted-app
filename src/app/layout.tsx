@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Document Q&A',
+  title: { default: 'Document Q&A', template: '%s \u00b7 Document Q&A' },
   description: 'Ask questions about your documents and get cited, verifiable answers.',
 };
 

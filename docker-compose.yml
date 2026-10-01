@@ -18,5 +18,40 @@ services:
       timeout: 3s
       retries: 10
 
+  # `docker compose --profile full up --build` runs the production image end to end.
+  migrate:
+    profiles: ['full']
+    build:
+      context: .
+      target: migrator
+    environment:
+      DATABASE_URL: postgresql://app:app@db:5432/docqa
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  app:
+    profiles: ['full']
+    build:
+      context: .
+      target: runner
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://app:app@db:5432/docqa
+      APP_ORIGIN: http://localhost:${APP_HOST_PORT:-3000}
+      # Empty means the app refuses to boot with a clear message; `npm run setup` generates one.
+      JWT_SECRET: ${JWT_SECRET:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.8-flash}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - '127.0.0.1:${APP_HOST_PORT:-3000}:3000'
+
 volumes:
   pgdata:

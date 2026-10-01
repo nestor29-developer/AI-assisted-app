@@ -4,7 +4,7 @@ import pino from 'pino';
 export function createCapturingLogger(level = 'debug') {
   const lines: string[] = [];
   const logger = pino(
-    { level, redact: ['password'] },
+    { level, formatters: { level: (label) => ({ level: label }) }, redact: ['password'] },
     { write: (line: string) => void lines.push(line) },
   );
   return {

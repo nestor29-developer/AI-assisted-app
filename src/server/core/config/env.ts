@@ -74,16 +74,18 @@ const int = (def: number, max = Number.MAX_SAFE_INTEGER) =>
 
 const originList = z.string().transform((value, ctx) => {
   const origins: string[] = [];
-  for (const raw of value
+  const entries = value
     .split(',')
     .map((v) => v.trim())
-    .filter(Boolean)) {
+    .filter(Boolean);
+  for (const [index, raw] of entries.entries()) {
     try {
       const url = new URL(raw);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('protocol');
       origins.push(url.origin);
     } catch {
-      ctx.addIssue({ code: 'custom', message: `"${raw}" is not a valid http(s) origin` });
+      // The entry itself is not echoed: it may carry credentials (https://user:pass@host).
+      ctx.addIssue({ code: 'custom', message: `entry ${index + 1} is not a valid http(s) origin` });
       return z.NEVER;
     }
   }
@@ -94,16 +96,7 @@ const originList = z.string().transform((value, ctx) => {
   return origins;
 });
 
-const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-  APP_VERSION: z.string().min(1).default('dev'),
-  APP_ORIGIN: originList.default(() => ['http://localhost:3000']),
-  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
-
-  JWT_SECRET: z.string().min(32, 'must be at least 32 characters'),
-  SESSION_TTL_HOURS: int(8, 168),
-
+const databaseEnvSchema = z.object({
   DATABASE_URL: z
     .string()
     .regex(/^postgres(ql)?:\/\//, 'must start with postgres:// or postgresql://')
@@ -114,7 +107,19 @@ const envSchema = z.object({
   PGPASSWORD: z.string().min(1).optional(),
   PGDATABASE: z.string().min(1).optional(),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
-  DB_POOL_MAX: int(10, 100),
+  // tasks x pool max must stay well under the database's max_connections, also during rolling deploys.
+  DB_POOL_MAX: int(5, 100),
+});
+
+const envSchema = databaseEnvSchema.extend({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  APP_VERSION: z.string().min(1).default('dev'),
+  APP_ORIGIN: originList.default(() => ['http://localhost:3000']),
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+
+  JWT_SECRET: z.string().min(32, 'must be at least 32 characters'),
+  SESSION_TTL_HOURS: int(8, 168),
 
   LLM_PROVIDER: z.enum(['gemini', 'mock']).default('mock'),
   LLM_MODEL: z.string().min(1).default('gemini-3.8-flash'),
@@ -142,24 +147,65 @@ const envSchema = z.object({
 });
 
 type Env = z.infer<typeof envSchema>;
+type DatabaseEnv = z.infer<typeof databaseEnvSchema>;
+type RawEnv = Readonly<Record<string, string>>;
+
+function databaseProblems(env: RawEnv): string[] {
+  const hasParams = env.PGHOST && env.PGUSER && env.PGPASSWORD && env.PGDATABASE;
+  if (env.DATABASE_URL || hasParams) return [];
+  return ['DATABASE_URL: set it, or all of PGHOST, PGUSER, PGPASSWORD and PGDATABASE'];
+}
 
 /** Zod skips refinements once a field fails, so these run separately and all problems show at once. */
-function crossFieldProblems(env: Readonly<Record<string, string>>): string[] {
-  const problems: string[] = [];
+function crossFieldProblems(env: RawEnv): string[] {
+  const problems = databaseProblems(env);
   if (env.LLM_PROVIDER === 'gemini' && !env.GEMINI_API_KEY) {
     problems.push('GEMINI_API_KEY: is required when LLM_PROVIDER=gemini');
   }
   if (env.NODE_ENV === 'production' && env.JWT_SECRET?.startsWith(PLACEHOLDER_JWT_PREFIX)) {
     problems.push('JWT_SECRET: must not be the development placeholder');
   }
-  const hasParams = env.PGHOST && env.PGUSER && env.PGPASSWORD && env.PGDATABASE;
-  if (!env.DATABASE_URL && !hasParams) {
-    problems.push('DATABASE_URL: set it, or all of PGHOST, PGUSER, PGPASSWORD and PGDATABASE');
+  return problems;
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function isLoopbackHttp(origin: string): boolean {
+  const url = new URL(origin);
+  return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname);
+}
+
+/** 43+ characters is 256 bits of base64; the distinct-character floor rejects "aaaa..." style secrets. */
+function isStrongSecret(secret: string): boolean {
+  return secret.length >= 43 && new Set(secret).size >= 12;
+}
+
+/** Production is either HTTPS behind a proxy, or an all-localhost demo (docker compose on a laptop). */
+function productionProblems(env: Env): string[] {
+  if (env.NODE_ENV !== 'production') return [];
+  const problems: string[] = [];
+  const localDemo = env.APP_ORIGIN.every(isLoopbackHttp);
+  const allHttps = env.APP_ORIGIN.every((origin) => origin.startsWith('https://'));
+
+  if (!localDemo && !allHttps) {
+    problems.push(
+      'APP_ORIGIN: use https origins only in production (http is accepted only when every origin is localhost)',
+    );
+  }
+  if (!localDemo && env.TRUSTED_PROXY_HOPS < 1) {
+    problems.push(
+      'TRUSTED_PROXY_HOPS: set it to the number of proxies in front of the app (1 behind an ALB), or every client shares one rate-limit bucket',
+    );
+  }
+  if (!isStrongSecret(env.JWT_SECRET)) {
+    problems.push(
+      'JWT_SECRET: use a random value of 43+ characters with varied characters (openssl rand -base64 48)',
+    );
   }
   return problems;
 }
 
-function toDatabaseConfig(env: Env): DatabaseConfig {
+function toDatabaseConfig(env: DatabaseEnv): DatabaseConfig {
   const common = { ssl: env.DATABASE_SSL === 'true', poolMax: env.DB_POOL_MAX };
   if (env.DATABASE_URL) return { kind: 'url', connectionString: env.DATABASE_URL, ...common };
   return {
@@ -173,21 +219,33 @@ function toDatabaseConfig(env: Env): DatabaseConfig {
   };
 }
 
-/** Pure and side-effect free so tests can pass any source. Error messages never echo values. */
-export function loadConfig(source: Readonly<Record<string, string | undefined>>): AppConfig {
+function clean(source: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const cleaned: Record<string, string> = {};
   for (const [key, value] of Object.entries(source)) {
     if (value !== undefined && value !== '') cleaned[key] = value;
   }
-  const parsed = envSchema.safeParse(cleaned);
+  return cleaned;
+}
+
+function formatIssues(error: z.ZodError): string[] {
+  return error.issues.map((issue) => `${issue.path.join('.') || 'env'}: ${issue.message}`);
+}
+
+/** Only the database variables: a migration task should not need app secrets like JWT_SECRET. */
+export function loadDatabaseConfig(
+  source: Readonly<Record<string, string | undefined>>,
+): DatabaseConfig {
+  const cleaned = clean(source);
+  const parsed = databaseEnvSchema.safeParse(cleaned);
   const problems = [
-    ...(parsed.success
-      ? []
-      : parsed.error.issues.map((issue) => `${issue.path.join('.') || 'env'}: ${issue.message}`)),
-    ...crossFieldProblems(cleaned),
+    ...(parsed.success ? [] : formatIssues(parsed.error)),
+    ...databaseProblems(cleaned),
   ];
   if (!parsed.success || problems.length > 0) throw new ConfigError(problems);
-  const env = parsed.data;
+  return toDatabaseConfig(parsed.data);
+}
+
+function toAppConfig(env: Env): AppConfig {
   return {
     nodeEnv: env.NODE_ENV,
     logLevel: env.LOG_LEVEL,
@@ -226,6 +284,19 @@ export function loadConfig(source: Readonly<Record<string, string | undefined>>)
       aiRequestRetentionDays: env.AI_REQUEST_RETENTION_DAYS,
     },
   };
+}
+
+/** Pure and side-effect free so tests can pass any source. Error messages never echo values. */
+export function loadConfig(source: Readonly<Record<string, string | undefined>>): AppConfig {
+  const cleaned = clean(source);
+  const parsed = envSchema.safeParse(cleaned);
+  const problems = [
+    ...(parsed.success ? [] : formatIssues(parsed.error)),
+    ...crossFieldProblems(cleaned),
+    ...(parsed.success ? productionProblems(parsed.data) : []),
+  ];
+  if (!parsed.success || problems.length > 0) throw new ConfigError(problems);
+  return toAppConfig(parsed.data);
 }
 
 let cached: AppConfig | undefined;

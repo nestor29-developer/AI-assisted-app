@@ -5,7 +5,7 @@ import { NotFoundError } from '@/server/core/errors';
 import type { SessionUser } from '@/server/core/session';
 import { createCapturingLogger } from '@/test/helpers/logger';
 
-import { createRoute, type Authenticator } from './route';
+import { createRoute, isRouteHandler, type Authenticator } from './route';
 
 const alice: SessionUser = { id: 'user-1', email: 'alice@example.com' };
 
@@ -16,6 +16,7 @@ function setup(authenticate: Authenticator = async () => null) {
     authenticate,
     allowedOrigins: ['http://localhost:3000'],
     maxJsonBytes: 1024,
+    trustedProxyHops: 1,
   }));
   return { route, records };
 }
@@ -64,6 +65,32 @@ describe('route(): request id', () => {
 
     expect(response.status).toBe(302);
     expect(response.headers.get('x-request-id')).toBeTruthy();
+  });
+});
+
+describe('route(): response defaults', () => {
+  it('marks responses no-store unless the handler chose a cache policy', async () => {
+    const { route } = setup();
+    const plain = route({ auth: 'public' }, () => new Response('ok'));
+    const cached = route(
+      { auth: 'public' },
+      () => new Response('ok', { headers: { 'cache-control': 'public, max-age=60' } }),
+    );
+
+    expect((await plain(get(), noParams)).headers.get('cache-control')).toBe('no-store');
+    expect((await cached(get(), noParams)).headers.get('cache-control')).toBe('public, max-age=60');
+  });
+
+  it('exposes the proxy-aware client IP to handlers', async () => {
+    const { route } = setup();
+    const handler = route({ auth: 'public' }, ({ clientIp }) => Response.json({ clientIp }));
+
+    const response = await handler(
+      get('/api/v1/x', { 'x-forwarded-for': '198.51.100.7, 203.0.113.9' }),
+      noParams,
+    );
+
+    expect(await response.json()).toEqual({ clientIp: '203.0.113.9' });
   });
 });
 
@@ -236,5 +263,78 @@ describe('route(): error handling and logging', () => {
       userId: 'user-1',
     });
     expect(typeof completed[0]?.durationMs).toBe('number');
+  });
+});
+
+describe('route(): hardening', () => {
+  it('never logs bound query parameters carried by a database error wrapper', async () => {
+    const { route, records } = setup(async () => alice);
+    const handler = route({}, () => {
+      const pg = Object.assign(new Error('connection terminated unexpectedly'), { code: '57P01' });
+      throw new Error(
+        'Failed query: insert into "users" params: victim@example.com,$argon2id$v=19$secret',
+        { cause: pg },
+      );
+    });
+
+    await handler(get(), noParams);
+
+    const output = JSON.stringify(records());
+    expect(output).not.toContain('victim@example.com');
+    expect(output).not.toContain('argon2id');
+    expect(records().find((r) => r.msg === 'request failed')).toMatchObject({
+      err: { message: 'connection terminated unexpectedly', code: '57P01' },
+    });
+  });
+
+  it('treats a client that hung up as a quiet 499, not a 500 with error logs', async () => {
+    const { route, records } = setup(async () => alice);
+    const controller = new AbortController();
+    const handler = route({}, () => {
+      controller.abort();
+      throw new TypeError('terminated');
+    });
+
+    const response = await handler(
+      new Request('http://localhost:3000/api/v1/x', { signal: controller.signal }),
+      noParams,
+    );
+
+    expect(response.status).toBe(499);
+    expect(records().some((r) => r.level === 'error')).toBe(false);
+    expect(records().find((r) => r.msg === 'request completed')).toMatchObject({
+      level: 'debug',
+      code: 'CLIENT_CLOSED',
+    });
+  });
+
+  it('records the error code on the completion line so rejections can be attributed', async () => {
+    const { route, records } = setup();
+
+    await route({}, () => new Response('ok'))(get(), noParams);
+
+    expect(records().find((r) => r.msg === 'request completed')).toMatchObject({
+      status: 401,
+      code: 'UNAUTHENTICATED',
+    });
+  });
+
+  it('lets a route tighten its own body cap below the app-wide limit', async () => {
+    const { route } = setup(async () => alice);
+    const handler = route(
+      { body: z.object({ a: z.string() }), maxBodyBytes: 20 },
+      () => new Response('ok'),
+    );
+
+    expect((await handler(post('{"a":"short"}'), noParams)).status).toBe(200);
+    expect((await handler(post(`{"a":"${'x'.repeat(50)}"}`), noParams)).status).toBe(413);
+  });
+
+  it('brands handlers it creates, so unwrapped exports can be detected', () => {
+    const { route } = setup();
+
+    expect(isRouteHandler(route({ auth: 'public' }, () => new Response('ok')))).toBe(true);
+    expect(isRouteHandler(async () => new Response('ok'))).toBe(false);
+    expect(isRouteHandler(undefined)).toBe(false);
   });
 });

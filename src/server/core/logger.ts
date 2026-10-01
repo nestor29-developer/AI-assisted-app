@@ -5,7 +5,18 @@ import { SERVICE_NAME } from '@/server/core/constants';
 
 export type { Logger };
 
-const SENSITIVE_KEYS = ['password', 'token', 'apiKey', 'authorization', 'cookie', 'jwt', 'secret'];
+const SENSITIVE_KEYS = [
+  'password',
+  'passwordHash',
+  'email',
+  'params',
+  'token',
+  'apiKey',
+  'authorization',
+  'cookie',
+  'jwt',
+  'secret',
+];
 
 const REDACT_PATHS = [
   ...SENSITIVE_KEYS,
@@ -13,6 +24,7 @@ const REDACT_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
   'res.headers["set-cookie"]',
+  'headers["set-cookie"]',
 ];
 
 export interface LoggerOptions {
@@ -21,7 +33,7 @@ export interface LoggerOptions {
   readonly destination?: DestinationStream;
 }
 
-/** Logs ids, counts and timings only; redaction is a safety net, never document or prompt text. */
+/** Log ids, counts and timings only: redaction is a safety net and cannot catch text inside messages. */
 export function createLogger({ level, version, destination }: LoggerOptions): Logger {
   return pino(
     {
