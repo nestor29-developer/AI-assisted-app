@@ -1,0 +1,60 @@
+{
+  "type": "object",
+  "properties": {
+    "answer": {
+      "type": "string",
+      "description": "Plain-text answer. Put the source after each claim, like [S1]. Say what is missing if only partly answered."
+    },
+    "citations": {
+      "maxItems": 8,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "enum": [
+              "S1",
+              "S2"
+            ],
+            "description": "Id of the source the quote was copied from."
+          },
+          "quote": {
+            "type": "string",
+            "description": "ONE contiguous quote, at most 25 words, copied exactly from that source."
+          }
+        },
+        "required": [
+          "sourceId",
+          "quote"
+        ],
+        "additionalProperties": false
+      },
+      "description": "One entry for each source id cited in the answer; at most 8."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "answered",
+        "partially_answered",
+        "not_found"
+      ],
+      "description": "answered: every part supported. partially_answered: some part unsupported. not_found: nothing in the sources answers it."
+    },
+    "followUpQuestions": {
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Up to 3 short questions the sources can answer; empty for not_found."
+    }
+  },
+  "required": [
+    "answer",
+    "citations",
+    "status",
+    "followUpQuestions"
+  ],
+  "additionalProperties": false
+}
