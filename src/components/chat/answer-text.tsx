@@ -23,7 +23,7 @@ export function AnswerText({
   readonly cursor?: boolean;
 }) {
   return (
-    <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-slate-800">
+    <p className="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-800">
       {splitAtSourceMarkers(text).map((segment, index) => {
         if (segment.kind === 'text') return segment.text;
         return segment.ids.map((id) =>

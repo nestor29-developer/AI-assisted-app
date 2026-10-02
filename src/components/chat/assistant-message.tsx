@@ -40,7 +40,7 @@ export function StoppedReply({
     <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
       <p className="text-sm font-medium text-slate-900">You stopped this answer</p>
       {partial ? (
-        <p className="text-sm leading-relaxed break-words whitespace-pre-wrap text-slate-600">
+        <p className="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-600">
           {partial}
         </p>
       ) : null}
@@ -79,7 +79,7 @@ export function AssistantMessage({
     );
   }
   return (
-    <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed break-words whitespace-pre-wrap text-slate-800">
+    <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-800">
       {message.content}
     </p>
   );

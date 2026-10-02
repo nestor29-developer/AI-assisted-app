@@ -33,7 +33,7 @@ const STICK_TO_BOTTOM_PX = 160;
 function UserBubble({ content }: { readonly content: string }) {
   return (
     <div className="flex justify-end">
-      <p className="max-w-[85%] rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2 text-sm break-words whitespace-pre-wrap text-white">
+      <p className="max-w-[85%] rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2 text-sm wrap-break-word whitespace-pre-wrap text-white">
         {content}
       </p>
     </div>
@@ -147,7 +147,7 @@ export function ChatView({ documentId }: { readonly documentId: string }) {
         ) : null}
         {documentQuery.isSuccess ? (
           <>
-            <h1 className="text-xl font-semibold break-words text-slate-900">
+            <h1 className="text-xl font-semibold wrap-break-word text-slate-900">
               {documentQuery.data.title}
             </h1>
             <p className="text-xs text-slate-600">

@@ -41,7 +41,7 @@ export function SourceList({ citations, sources, markedIds, openIds, onToggle }:
               </div>
               {quotes.map((quote) => (
                 <figure key={quote.quote} className="space-y-1.5">
-                  <blockquote className="border-l-2 border-slate-300 pl-3 text-sm leading-relaxed break-words whitespace-pre-wrap text-slate-800">
+                  <blockquote className="border-l-2 border-slate-300 pl-3 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-800">
                     “{quote.quote}”
                   </blockquote>
                   <figcaption>
@@ -70,7 +70,7 @@ export function SourceList({ citations, sources, markedIds, openIds, onToggle }:
                     tabIndex={0}
                     role="region"
                     aria-label={`Text of source ${id}`}
-                    className="mt-2 max-h-60 overflow-auto rounded-md bg-slate-50 p-3 text-sm leading-relaxed break-words whitespace-pre-wrap text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-indigo-600"
+                    className="mt-2 max-h-60 overflow-auto rounded-md bg-slate-50 p-3 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-indigo-600"
                   >
                     {source.text}
                   </div>
