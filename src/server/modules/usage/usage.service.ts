@@ -2,6 +2,12 @@ import { QuotaExceededError, TooManyConcurrentRequestsError } from '@/server/cor
 
 import type { AiRequestRepository, ReservationPolicy } from './ai-request.repository';
 
+const STALE_RESERVATION_SLACK_SECONDS = 60;
+
+/** A reservation older than the model timeout plus some slack belongs to a task that died. */
+export const staleAfterSeconds = (llmTimeoutMs: number): number =>
+  Math.ceil(llmTimeoutMs / 1000) + STALE_RESERVATION_SLACK_SECONDS;
+
 export interface ChatReservation {
   readonly userId: string;
   readonly documentId: string;

@@ -339,7 +339,7 @@ describe('ChatService.ask: refusals happen before anything is streamed', () => {
     const s = setup();
     const document = await upload(s, SMALL_TEXT);
 
-    const { error, seen } = await refusal(s, s.service.ask(input(document, '​\u0000   ')));
+    const { error, seen } = await refusal(s, s.service.ask(input(document, '\u{200B}\u0000   ')));
 
     expect(error).toBeInstanceOf(ValidationError);
     expect(seen).toEqual([]);

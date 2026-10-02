@@ -110,7 +110,7 @@ describe('DocumentService: pasted text', () => {
     });
 
     await expect(
-      service.createFromText(USER, { title: 'Empty', text: '​\u0000   ' }),
+      service.createFromText(USER, { title: 'Empty', text: '\u{200B}\u0000   ' }),
     ).rejects.toMatchObject({
       code: 'DOCUMENT_REJECTED',
     });

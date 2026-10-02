@@ -19,7 +19,8 @@
     "db:migrate": "tsx --conditions=react-server --env-file-if-exists=.env scripts/migrate.ts",
     "test:integration": "vitest run --config vitest.integration.config.mts",
     "smoke:gemini": "tsx --conditions=react-server --env-file-if-exists=.env scripts/smoke-gemini.ts",
-    "eval": "tsx --conditions=react-server --env-file-if-exists=.env scripts/eval.ts"
+    "eval": "tsx --conditions=react-server --env-file-if-exists=.env scripts/eval.ts",
+    "purge": "tsx --conditions=react-server --env-file-if-exists=.env scripts/purge-expired.ts"
   },
   "dependencies": {
     "@google/genai": "^2.26.0",

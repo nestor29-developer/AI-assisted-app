@@ -22,7 +22,7 @@ import { DocumentService } from '@/server/modules/documents/document.service';
 import { DrizzleDocumentRepository } from '@/server/modules/documents/document.repository';
 import { DrizzleAiRequestRepository } from '@/server/modules/usage/ai-request.repository';
 import { PostgresRateLimiter, type RateLimiter } from '@/server/modules/usage/rate-limiter';
-import { UsageService } from '@/server/modules/usage/usage.service';
+import { staleAfterSeconds, UsageService } from '@/server/modules/usage/usage.service';
 
 export interface Container {
   readonly config: AppConfig;
@@ -45,7 +45,6 @@ export interface ContainerDeps {
 }
 
 const DAY_SECONDS = 86_400;
-const STALE_RESERVATION_SLACK_SECONDS = 60;
 
 /** The composition root: every concrete adapter is chosen and wired here, and only here. */
 export function createContainer({ config, logger, database, providers }: ContainerDeps): Container {
@@ -102,7 +101,7 @@ export function createContainer({ config, logger, database, providers }: Contain
       maxConcurrent: config.limits.maxConcurrentStreams,
       dailyBudgetTokens: config.limits.dailyTokenBudget,
       windowSeconds: DAY_SECONDS,
-      staleAfterSeconds: Math.ceil(config.ai.llmTimeoutMs / 1000) + STALE_RESERVATION_SLACK_SECONDS,
+      staleAfterSeconds: staleAfterSeconds(config.ai.llmTimeoutMs),
     }),
     aiRequests,
     rateLimiter,

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError, loadConfig, loadDatabaseConfig } from './env';
+import {
+  ConfigError,
+  loadConfig,
+  loadDatabaseConfig,
+  loadMaintenanceConfig,
+  loadMigrationConfig,
+} from './env';
 
 const valid = {
   JWT_SECRET: 'x'.repeat(32),
@@ -187,5 +193,70 @@ describe('production rules', () => {
     const message = failure({ ...valid, APP_ORIGIN: 'ftp://admin:hunter2@example.com' }).message;
     expect(message).toContain('APP_ORIGIN');
     expect(message).not.toContain('hunter2');
+  });
+});
+
+describe('loadMigrationConfig', () => {
+  const database = { DATABASE_URL: 'postgresql://user:pass@localhost:5432/db' };
+  const role = { APP_DB_USER: 'app_rw', APP_DB_PASSWORD: 'a-long-enough-password' };
+
+  it('needs only the database: a migration task holds no app secrets', () => {
+    expect(loadMigrationConfig(database)).toMatchObject({
+      database: { kind: 'url' },
+      appRole: null,
+    });
+  });
+
+  it('returns the app login when both variables are set', () => {
+    expect(loadMigrationConfig({ ...database, ...role }).appRole).toEqual({
+      username: 'app_rw',
+      password: 'a-long-enough-password',
+    });
+  });
+
+  it.each([
+    ['only the user', { APP_DB_USER: 'app_rw' }],
+    ['only the password', { APP_DB_PASSWORD: 'a-long-enough-password' }],
+  ])('refuses %s, because half a login is a mistake', (_label, half) => {
+    expect(() => loadMigrationConfig({ ...database, ...half })).toThrow(/must be set together/);
+  });
+
+  it.each([
+    ['an upper-case name', { ...role, APP_DB_USER: 'App_RW' }, /APP_DB_USER/],
+    ['a name that is not an identifier', { ...role, APP_DB_USER: 'app"; drop' }, /APP_DB_USER/],
+    ['a short password', { ...role, APP_DB_PASSWORD: 'short' }, /APP_DB_PASSWORD/],
+  ])('rejects %s', (_label, bad, message) => {
+    expect(() => loadMigrationConfig({ ...database, ...bad })).toThrow(message);
+  });
+
+  it('still insists on a database', () => {
+    expect(() => loadMigrationConfig(role)).toThrow(ConfigError);
+  });
+});
+
+describe('loadMaintenanceConfig', () => {
+  const database = { DATABASE_URL: 'postgresql://user:pass@localhost:5432/db' };
+
+  it('defaults to the documented retention and needs nothing but the database', () => {
+    expect(loadMaintenanceConfig(database)).toMatchObject({
+      aiRequestRetentionDays: 90,
+      llmTimeoutMs: 60_000,
+    });
+  });
+
+  it('reads the two settings it uses', () => {
+    const config = loadMaintenanceConfig({
+      ...database,
+      AI_REQUEST_RETENTION_DAYS: '30',
+      LLM_TIMEOUT_MS: '90000',
+    });
+
+    expect(config).toMatchObject({ aiRequestRetentionDays: 30, llmTimeoutMs: 90_000 });
+  });
+
+  it('refuses a retention of zero days, which would delete the audit trail at once', () => {
+    expect(() => loadMaintenanceConfig({ ...database, AI_REQUEST_RETENTION_DAYS: '0' })).toThrow(
+      /AI_REQUEST_RETENTION_DAYS/,
+    );
   });
 });

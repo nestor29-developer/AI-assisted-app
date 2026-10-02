@@ -10,9 +10,11 @@ import { createLogger } from '@/server/core/logger';
 
 const LOCAL_DEFAULT = 'postgresql://app:app@localhost:5432/docqa';
 
+export const testDatabaseUrl = (): string => process.env.DATABASE_URL ?? LOCAL_DEFAULT;
+
 /** A pool on the compose database (or DATABASE_URL), with no statement timeout. */
 export function createTestPool() {
-  const config = loadDatabaseConfig({ DATABASE_URL: process.env.DATABASE_URL ?? LOCAL_DEFAULT });
+  const config = loadDatabaseConfig({ DATABASE_URL: testDatabaseUrl() });
   return createPool(config, {
     logger: createLogger({ level: 'silent', version: 'test' }),
     statementTimeoutMs: 0,
@@ -23,5 +25,5 @@ export function createTestPool() {
 export async function connectTestDatabase() {
   const pool = createTestPool();
   await runMigrations(pool, resolve('drizzle'));
-  return { db: drizzle(pool, { schema }), close: () => pool.end() };
+  return { db: drizzle(pool, { schema }), pool, close: () => pool.end() };
 }

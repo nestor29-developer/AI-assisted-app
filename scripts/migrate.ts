@@ -1,17 +1,23 @@
 import { resolve } from 'node:path';
 
-import { loadDatabaseConfig } from '@/server/core/config/env';
+import { loadMigrationConfig } from '@/server/core/config/env';
 import { createPool } from '@/server/core/db/client';
 import { runMigrations } from '@/server/core/db/migrator';
+import { provisionAppRole } from '@/server/core/db/roles';
 import { createLogger } from '@/server/core/logger';
 
-/** Applies the SQL files in ./drizzle. In AWS this runs as a one-off task with the master role. */
+/** Applies ./drizzle, then sets up the app's login if asked. In AWS: a one-off task as the master user. */
 async function main(): Promise<void> {
   const logger = createLogger({ level: 'info', version: 'migrate' });
-  const pool = createPool(loadDatabaseConfig(process.env), { logger, statementTimeoutMs: 0 });
+  const { database, appRole } = loadMigrationConfig(process.env);
+  const pool = createPool(database, { logger, statementTimeoutMs: 0 });
   try {
     await runMigrations(pool, resolve('drizzle'));
     logger.info('migrations applied');
+    if (appRole) {
+      await provisionAppRole(pool, appRole);
+      logger.info({ role: appRole.username }, 'application role provisioned');
+    }
   } finally {
     await pool.end();
   }

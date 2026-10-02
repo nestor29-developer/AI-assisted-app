@@ -250,6 +250,63 @@ export function loadDatabaseConfig(
   return toDatabaseConfig(parsed.data);
 }
 
+/** Lower case only, so Postgres' case folding can never make two spellings the same role. */
+const APP_ROLE_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+
+const appRoleEnvSchema = z.object({
+  APP_DB_USER: z
+    .string()
+    .regex(APP_ROLE_NAME, 'must be a lower-case Postgres role name')
+    .optional(),
+  APP_DB_PASSWORD: z.string().min(16, 'must be at least 16 characters').optional(),
+});
+
+export interface MigrationConfig {
+  readonly database: DatabaseConfig;
+  /** The least-privilege role the app runs as; null where the app connects as the migration user. */
+  readonly appRole: { readonly username: string; readonly password: string } | null;
+}
+
+/** For the migration task: the database, plus the app's own database login if one is to be set up. */
+export function loadMigrationConfig(
+  source: Readonly<Record<string, string | undefined>>,
+): MigrationConfig {
+  const database = loadDatabaseConfig(source);
+  const parsed = appRoleEnvSchema.safeParse(clean(source));
+  if (!parsed.success) throw new ConfigError(formatIssues(parsed.error));
+
+  const { APP_DB_USER: username, APP_DB_PASSWORD: password } = parsed.data;
+  if ((username === undefined) !== (password === undefined)) {
+    throw new ConfigError(['APP_DB_USER and APP_DB_PASSWORD must be set together']);
+  }
+  return { database, appRole: username && password ? { username, password } : null };
+}
+
+const maintenanceEnvSchema = z.object({
+  AI_REQUEST_RETENTION_DAYS: int(90),
+  LLM_TIMEOUT_MS: int(60_000),
+});
+
+export interface MaintenanceConfig {
+  readonly database: DatabaseConfig;
+  readonly aiRequestRetentionDays: number;
+  readonly llmTimeoutMs: number;
+}
+
+/** For the scheduled purge task: the database and two retention settings, nothing else. */
+export function loadMaintenanceConfig(
+  source: Readonly<Record<string, string | undefined>>,
+): MaintenanceConfig {
+  const database = loadDatabaseConfig(source);
+  const parsed = maintenanceEnvSchema.safeParse(clean(source));
+  if (!parsed.success) throw new ConfigError(formatIssues(parsed.error));
+  return {
+    database,
+    aiRequestRetentionDays: parsed.data.AI_REQUEST_RETENTION_DAYS,
+    llmTimeoutMs: parsed.data.LLM_TIMEOUT_MS,
+  };
+}
+
 function toAppConfig(env: Env): AppConfig {
   return {
     nodeEnv: env.NODE_ENV,
