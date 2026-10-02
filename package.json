@@ -18,7 +18,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --conditions=react-server --env-file-if-exists=.env scripts/migrate.ts",
     "test:integration": "vitest run --config vitest.integration.config.mts",
-    "smoke:gemini": "tsx --conditions=react-server --env-file-if-exists=.env scripts/smoke-gemini.ts"
+    "smoke:gemini": "tsx --conditions=react-server --env-file-if-exists=.env scripts/smoke-gemini.ts",
+    "eval": "tsx --conditions=react-server --env-file-if-exists=.env scripts/eval.ts"
   },
   "dependencies": {
     "@google/genai": "^2.26.0",

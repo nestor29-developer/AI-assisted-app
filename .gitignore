@@ -30,6 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# eval reports are local output; the interesting numbers go in the docs
+/evals/reports/
+
 # env files: real values stay local, the template is tracked
 .env*
 !.env.example

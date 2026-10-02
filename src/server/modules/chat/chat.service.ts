@@ -57,6 +57,8 @@ export interface ChatConfig {
   readonly appVersion: string;
   readonly ragTopK: number;
   readonly fullContextMaxTokens: number;
+  /** Makes a model's output repeatable where it supports it; the eval harness sets it. */
+  readonly llmSeed?: number;
 }
 
 export interface ChatServiceDeps {
@@ -268,6 +270,7 @@ export class ChatService {
         ...built,
         grounding: { question, sources: sources.map(({ id, text }) => ({ id, text })) },
         signal: abort.signal,
+        ...(config.llmSeed === undefined ? {} : { seed: config.llmSeed }),
       })) {
         if (event.type === 'text') {
           state.rawText += event.text;
