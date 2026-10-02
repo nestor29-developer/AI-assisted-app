@@ -6,9 +6,9 @@ export interface ProblemContext {
   readonly instance: string;
 }
 
-/** Builds the RFC 9457 response; `code` is the stable field clients should branch on. */
-export function problemResponse(error: AppError, context: ProblemContext): Response {
-  const body: ProblemDetails = {
+/** The RFC 9457 body; `code` is the stable field clients should branch on. */
+export function toProblemDetails(error: AppError, context: ProblemContext): ProblemDetails {
+  return {
     type: `urn:problem:${error.code.toLowerCase().replaceAll('_', '-')}`,
     title: error.message,
     status: error.status,
@@ -21,13 +21,19 @@ export function problemResponse(error: AppError, context: ProblemContext): Respo
       : { retryAfterSeconds: error.retryAfterSeconds }),
     ...(error.issues === undefined ? {} : { errors: [...error.issues] }),
   };
+}
 
+export function problemDetailsResponse(problem: ProblemDetails): Response {
   const headers = new Headers({
     'content-type': PROBLEM_CONTENT_TYPE,
     'cache-control': 'no-store',
   });
-  if (error.retryAfterSeconds !== undefined) {
-    headers.set('retry-after', String(error.retryAfterSeconds));
+  if (problem.retryAfterSeconds !== undefined) {
+    headers.set('retry-after', String(problem.retryAfterSeconds));
   }
-  return new Response(JSON.stringify(body), { status: error.status, headers });
+  return new Response(JSON.stringify(problem), { status: problem.status, headers });
+}
+
+export function problemResponse(error: AppError, context: ProblemContext): Response {
+  return problemDetailsResponse(toProblemDetails(error, context));
 }

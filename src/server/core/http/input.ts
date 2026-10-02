@@ -8,7 +8,10 @@ import {
 } from '@/server/core/errors';
 
 /** Reads the body with a hard cap, even for chunked requests that omit Content-Length. */
-export async function readBodyCapped(request: Request, maxBytes: number): Promise<Uint8Array> {
+export async function readBodyCapped(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer>> {
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) throw new PayloadTooLargeError(maxBytes);
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConcurrencyLimiter } from './concurrency';
+import { ConcurrencyLimiter, mapConcurrent } from './concurrency';
 import { ServiceBusyError } from './errors';
 
 /** A task that stays running until released, so tests control exactly what overlaps. */
@@ -63,5 +63,37 @@ describe('ConcurrencyLimiter', () => {
     );
 
     await expect(limiter.run(async () => 'still works')).resolves.toBe('still works');
+  });
+});
+
+describe('mapConcurrent', () => {
+  it('keeps results in input order while never exceeding the limit', async () => {
+    let running = 0;
+    let peak = 0;
+
+    const results = await mapConcurrent([30, 5, 20, 1, 10], 2, async (delay, index) => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      running -= 1;
+      return `item-${index}`;
+    });
+
+    expect(results).toEqual(['item-0', 'item-1', 'item-2', 'item-3', 'item-4']);
+    expect(peak).toBe(2);
+  });
+
+  it('handles an empty list and a limit larger than the list', async () => {
+    expect(await mapConcurrent([], 3, async () => 1)).toEqual([]);
+    expect(await mapConcurrent([1, 2], 10, async (n) => n * 2)).toEqual([2, 4]);
+  });
+
+  it('rejects with the first failure', async () => {
+    await expect(
+      mapConcurrent([1, 2, 3], 2, async (n) => {
+        if (n === 2) throw new Error('second failed');
+        return n;
+      }),
+    ).rejects.toThrow('second failed');
   });
 });

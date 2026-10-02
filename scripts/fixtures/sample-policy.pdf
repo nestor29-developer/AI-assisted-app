@@ -1,0 +1,72 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [4 0 R 6 0 R 8 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 260 >>
+stream
+BT
+/F1 12 Tf
+72 740 Td
+(Northwind Employee Handbook. Section 1: Leave. Full-time employees accrue 1.5) Tj
+0 -16 Td (vacation days per month, up to a maximum balance of 30 days. Unused vacation) Tj
+0 -16 Td (days expire on March 31 of the following year.) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 248 >>
+stream
+BT
+/F1 12 Tf
+72 740 Td
+(Section 2: Remote work. Remote work requires written approval from the direct) Tj
+0 -16 Td (manager each quarter. Employees working remotely must be reachable during core) Tj
+0 -16 Td (hours, nine to three local time.) Tj
+ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 9 0 R >>
+endobj
+9 0 obj
+<< /Length 249 >>
+stream
+BT
+/F1 12 Tf
+72 740 Td
+(Section 3: Expenses. Meals during business travel are reimbursed up to 60) Tj
+0 -16 Td (dollars per day. Receipts are required for any single expense above 25 dollars) Tj
+0 -16 Td (and must be submitted within 30 days.) Tj
+ET
+endstream
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000197 00000 n 
+0000000323 00000 n 
+0000000634 00000 n 
+0000000760 00000 n 
+0000001059 00000 n 
+0000001185 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1485
+%%EOF

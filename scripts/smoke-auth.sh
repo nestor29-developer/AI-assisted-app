@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Exercises the auth API end to end with curl and a cookie jar.
-# Usage: BASE_URL=http://localhost:3000 scripts/smoke-auth.sh
-# Note: auth endpoints allow ~10 attempts per minute per IP, so avoid looping this script.
+# Curl walkthrough of the auth API: BASE_URL=http://localhost:3000 scripts/smoke-auth.sh
+# Auth is rate limited to ~10 attempts per minute per IP, so do not run it in a loop.
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:3000}"
