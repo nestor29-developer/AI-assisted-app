@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { apiFetch, apiSend, ApiError } from './api-client';
-import { describeError } from './api-errors';
+import { describeError, describeErrorCode, describeFailedReply } from './api-errors';
 
 const schema = z.object({ ok: z.literal(true) });
 
@@ -34,6 +34,18 @@ describe('apiFetch', () => {
       '/api/v1/x',
       expect.objectContaining({ method: 'POST', credentials: 'same-origin', body: '{"a":1}' }),
     );
+  });
+
+  it('sends a multipart body without a content type, so the browser can add the boundary', async () => {
+    const fetchMock = stubFetch(Response.json({ ok: true }));
+    const form = new FormData();
+    form.set('file', new File(['hello'], 'a.txt'));
+
+    await apiFetch('/api/v1/x', schema, { method: 'POST', form });
+
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(init.body).toBe(form);
+    expect(new Headers(init.headers).has('content-type')).toBe(false);
   });
 
   it('turns a problem+json response into a typed ApiError', async () => {
@@ -129,5 +141,30 @@ describe('describeError', () => {
     expect(describeError(new Error('boom: stack trace'))).toBe(
       'Something went wrong. Please try again.',
     );
+  });
+});
+
+describe('describeErrorCode and describeFailedReply', () => {
+  it.each([
+    ['AI_UNAVAILABLE', 'not responding'],
+    ['SERVICE_BUSY', 'busy'],
+    ['QUOTA_EXCEEDED', 'usage limit'],
+    ['UNAUTHENTICATED', 'sign in again'],
+    ['INTERNAL', 'our side'],
+  ])('has its own wording for %s', (code, fragment) => {
+    expect(describeErrorCode(code)).toContain(fragment);
+  });
+
+  it('leaves codes whose server message is already good to the server', () => {
+    expect(describeErrorCode('CONFLICT')).toBeNull();
+    expect(describeErrorCode('PDF_NO_TEXT_LAYER')).toBeNull();
+  });
+
+  it('rebuilds the explanation for a stored failed reply from its code alone', () => {
+    expect(describeFailedReply('AI_UNAVAILABLE')).toContain('not responding');
+    expect(describeFailedReply('SOMETHING_NEW')).toBe(
+      'The answer could not be completed. Please try again.',
+    );
+    expect(describeFailedReply(null)).toBe('The answer could not be completed. Please try again.');
   });
 });

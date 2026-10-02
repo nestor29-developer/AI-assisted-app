@@ -1,7 +1,7 @@
 import { sanitizeText } from '@/server/ai/guardrails/sanitize';
-import { extractSourceMarkers } from '@/server/ai/prompts/document-qa/markers';
 import type { FinishReason } from '@/server/ai/providers/types';
 import { truncate } from '@/server/core/text';
+import { extractSourceMarkers } from '@/shared/source-markers';
 
 import { parseAnswer } from './answer-parser';
 import { resolveCitations } from './citations';

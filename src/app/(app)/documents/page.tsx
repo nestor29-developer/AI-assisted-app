@@ -1,14 +1,16 @@
 import type { Metadata } from 'next';
 
+import { DocumentList } from '@/components/documents/document-list';
+import { NewDocumentForm } from '@/components/documents/new-document-form';
+
 export const metadata: Metadata = { title: 'Documents' };
 
 export default function DocumentsPage() {
   return (
-    <section className="space-y-2">
-      <h1 className="text-xl font-semibold text-slate-900">Your documents</h1>
-      <p className="text-sm text-slate-600">
-        Uploading and asking questions arrives in the next step.
-      </p>
-    </section>
+    <div className="space-y-8">
+      <h1 className="text-xl font-semibold text-slate-900">Documents</h1>
+      <NewDocumentForm />
+      <DocumentList />
+    </div>
   );
 }

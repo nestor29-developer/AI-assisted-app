@@ -24,12 +24,23 @@ describe('loadConfig', () => {
     expect(config.ai.provider).toBe('mock');
     expect(config.ai.llmModel).toBe('gemini-3.8-flash');
     expect(config.ai.ragTopK).toBe(6);
+    expect(config.ai.mockChunkDelayMs).toBe(15);
     expect(config.appOrigins).toEqual(['http://localhost:3000']);
     expect(config.auth.sessionTtlSeconds).toBe(8 * 3600);
     expect(config.auth.cookieSecure).toBe(false);
     expect(config.limits.maxUploadBytes).toBe(10 * 1024 * 1024);
     expect(config.policy.injectionPolicy).toBe('flag');
     expect(config.database).toMatchObject({ kind: 'url', poolMax: 5, ssl: false });
+  });
+
+  it('lets the mock model stream slowly enough to watch, within sane bounds', () => {
+    expect(loadConfig({ ...valid, MOCK_LLM_CHUNK_DELAY_MS: '400' }).ai.mockChunkDelayMs).toBe(400);
+    expect(failure({ ...valid, MOCK_LLM_CHUNK_DELAY_MS: '0' }).problems.join()).toContain(
+      'MOCK_LLM_CHUNK_DELAY_MS',
+    );
+    expect(failure({ ...valid, MOCK_LLM_CHUNK_DELAY_MS: '60000' }).problems.join()).toContain(
+      'MOCK_LLM_CHUNK_DELAY_MS',
+    );
   });
 
   it('treats blank values like unset ones (as in a copied .env.example)', () => {

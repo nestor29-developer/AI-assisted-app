@@ -18,7 +18,7 @@ export function createAiProviders(config: AppConfig['ai']): AiProviders {
   switch (config.provider) {
     case 'mock':
       return {
-        llm: new MockLlmProvider({ chunkDelayMs: 15 }),
+        llm: new MockLlmProvider({ chunkDelayMs: config.mockChunkDelayMs }),
         embeddings: new MockEmbeddingProvider(),
       };
     case 'gemini': {

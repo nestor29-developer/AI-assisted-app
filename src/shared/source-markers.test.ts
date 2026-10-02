@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractSourceMarkers, stripSourceMarkers } from './markers';
+import { extractSourceMarkers, splitAtSourceMarkers, stripSourceMarkers } from './source-markers';
 
 describe('extractSourceMarkers', () => {
   it('returns each marker once, in order of first appearance', () => {
@@ -52,5 +52,45 @@ describe('stripSourceMarkers', () => {
     stripSourceMarkers(`${' '.repeat(200_000)}x`);
 
     expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe('splitAtSourceMarkers', () => {
+  it('splits an answer into text and marker groups, in order', () => {
+    expect(
+      splitAtSourceMarkers('Days accrue monthly [S1]. Remote work needs approval [S2, S3].'),
+    ).toEqual([
+      { kind: 'text', text: 'Days accrue monthly ' },
+      { kind: 'markers', ids: ['S1'] },
+      { kind: 'text', text: '. Remote work needs approval ' },
+      { kind: 'markers', ids: ['S2', 'S3'] },
+      { kind: 'text', text: '.' },
+    ]);
+  });
+
+  it('returns the whole text when there are no markers, and nothing for empty text', () => {
+    expect(splitAtSourceMarkers('No markers here [x].')).toEqual([
+      { kind: 'text', text: 'No markers here [x].' },
+    ]);
+    expect(splitAtSourceMarkers('')).toEqual([]);
+  });
+
+  it('handles markers at the very start, the very end and back to back', () => {
+    expect(splitAtSourceMarkers('[S1][s 2] done [S3]')).toEqual([
+      { kind: 'markers', ids: ['S1'] },
+      { kind: 'markers', ids: ['S2'] },
+      { kind: 'text', text: ' done ' },
+      { kind: 'markers', ids: ['S3'] },
+    ]);
+  });
+
+  it('gives back exactly the text it was given when the markers are put back', () => {
+    const text = 'A [S1] b [S2, S3] c [s4]';
+
+    const rebuilt = splitAtSourceMarkers(text)
+      .map((segment) => (segment.kind === 'text' ? segment.text : `[${segment.ids.join(', ')}]`))
+      .join('');
+
+    expect(rebuilt.replace(/\[s4\]/i, '[S4]')).toBe(text.replace('[s4]', '[S4]'));
   });
 });

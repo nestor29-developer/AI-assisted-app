@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 export const DOCUMENT_TITLE_MAX = 200;
 
+/** Server defaults, shared so the upload form can show them; the server enforces whatever is configured. */
+export const DEFAULT_MAX_UPLOAD_MB = 10;
+export const DEFAULT_MAX_PDF_PAGES = 100;
+
 export const documentSummarySchema = z.object({
   id: z.uuid(),
   title: z.string(),

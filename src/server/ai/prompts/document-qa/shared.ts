@@ -1,8 +1,8 @@
 import { truncate } from '@/server/core/text';
+import { stripSourceMarkers } from '@/shared/source-markers';
 
 import type { BuiltPrompt, HistoryTurn, PromptInput, PromptSource } from '../types';
 
-import { stripSourceMarkers } from './markers';
 import { buildAnswerSchema, toResponseJsonSchema } from './output-schema';
 
 export const DOCUMENT_QA_PROMPT_ID = 'document-qa';

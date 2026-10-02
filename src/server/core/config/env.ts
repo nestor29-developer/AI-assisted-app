@@ -2,6 +2,8 @@ import 'server-only';
 
 import { z } from 'zod';
 
+import { DEFAULT_MAX_PDF_PAGES, DEFAULT_MAX_UPLOAD_MB } from '@/shared/contracts/documents';
+
 export class ConfigError extends Error {
   constructor(readonly problems: readonly string[]) {
     super(`Invalid configuration:\n${problems.map((p) => ` - ${p}`).join('\n')}`);
@@ -48,6 +50,8 @@ export interface AppConfig {
     readonly fullContextMaxTokens: number;
     readonly ragTopK: number;
     readonly llmTimeoutMs: number;
+    /** Pause between streamed chunks of the offline mock model; raise it to watch streaming and Stop. */
+    readonly mockChunkDelayMs: number;
   };
   readonly limits: {
     readonly maxUploadBytes: number;
@@ -132,9 +136,10 @@ const envSchema = databaseEnvSchema.extend({
   FULL_CONTEXT_MAX_TOKENS: int(3000),
   RAG_TOP_K: int(6, 20),
   LLM_TIMEOUT_MS: int(60_000),
+  MOCK_LLM_CHUNK_DELAY_MS: int(15, 5_000),
 
-  MAX_UPLOAD_MB: int(10, 50),
-  MAX_PDF_PAGES: int(100, 1000),
+  MAX_UPLOAD_MB: int(DEFAULT_MAX_UPLOAD_MB, 50),
+  MAX_PDF_PAGES: int(DEFAULT_MAX_PDF_PAGES, 1000),
   MAX_DOCUMENT_CHARS: int(400_000),
   DAILY_TOKEN_BUDGET: int(200_000),
   MAX_CONCURRENT_STREAMS: int(2, 10),
@@ -267,6 +272,7 @@ function toAppConfig(env: Env): AppConfig {
       fullContextMaxTokens: env.FULL_CONTEXT_MAX_TOKENS,
       ragTopK: env.RAG_TOP_K,
       llmTimeoutMs: env.LLM_TIMEOUT_MS,
+      mockChunkDelayMs: env.MOCK_LLM_CHUNK_DELAY_MS,
     },
     limits: {
       maxUploadBytes: env.MAX_UPLOAD_MB * 1024 * 1024,
