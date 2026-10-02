@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { detectInjection } from '@/server/ai/guardrails/injection-detector';
-import { sanitizeText } from '@/server/ai/guardrails/sanitize';
+import { hasHiddenText, sanitizeText } from '@/server/ai/guardrails/sanitize';
 import { estimateCostUsd } from '@/server/ai/pricing';
 import { AnswerStreamExtractor } from '@/server/ai/postprocess/answer-stream';
 import { processAnswer } from '@/server/ai/postprocess/process-answer';
@@ -177,9 +177,7 @@ export class ChatService {
     if (question === '')
       throw new ValidationError([{ path: 'question', message: 'Ask a question first.' }]);
 
-    const verdict = detectInjection(question, {
-      hiddenUnicodeFound: cleaned.removed.tagCharacters > 0 || cleaned.removed.bidiControls > 0,
-    });
+    const verdict = detectInjection(question, { hiddenUnicodeFound: hasHiddenText(cleaned) });
     if (verdict.level !== 'none') {
       logger.warn(
         { userId, risk: verdict.level, signals: verdict.signals },
@@ -274,7 +272,7 @@ export class ChatService {
         if (event.type === 'text') {
           state.rawText += event.text;
           state.ttftMs ??= elapsed();
-          const delta = extractor.push(event.text);
+          const delta = sanitizeText(extractor.push(event.text)).text;
           state.streamedAnswer = extractor.text;
           if (delta) yield { type: 'delta', text: delta };
         } else {

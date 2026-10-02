@@ -1,3 +1,5 @@
+import { splitAtWidth } from '@/server/core/text';
+
 export interface Chunk {
   readonly text: string;
   /** 1-based page for PDFs, null for plain text. */
@@ -43,41 +45,24 @@ function splitKeepingSeparator(text: string, separator: string): string[] {
   return parts;
 }
 
-/** Cuts at fixed width without splitting a surrogate pair (an emoji must stay whole). */
-function hardSplit(text: string, maxChars: number): string[] {
-  const pieces: string[] = [];
-  let start = 0;
-  while (start < text.length) {
-    let end = Math.min(start + maxChars, text.length);
-    const next = text.charCodeAt(end);
-    // Step back off a pair; if that would stall (width 1), take the whole pair instead.
-    if (end < text.length && next >= 0xdc00 && next <= 0xdfff)
-      end = end - 1 > start ? end - 1 : end + 1;
-    pieces.push(text.slice(start, end));
-    start = end;
-  }
-  return pieces;
-}
-
 function atomize(text: string, maxChars: number, level = 0): string[] {
   if (text.length <= maxChars) return [text];
   const separator = SEPARATORS[level];
-  if (separator === undefined) return hardSplit(text, maxChars);
+  if (separator === undefined) return splitAtWidth(text, maxChars);
 
   const parts = splitKeepingSeparator(text, separator);
   if (parts.length <= 1) return atomize(text, maxChars, level + 1);
   return parts.flatMap((part) => atomize(part, maxChars, level + 1));
 }
 
-/** The tail of the previous chunk, cut forward to a word start so overlap never begins mid-word. */
+/** The tail of a chunk longer than `overlapChars`, cut forward to a word start so it never begins mid-word. */
 function overlapTail(text: string, overlapChars: number): string {
-  if (overlapChars <= 0 || text.length === 0) return '';
-  let start = Math.max(0, text.length - overlapChars);
+  if (overlapChars <= 0) return '';
+  let start = text.length - overlapChars;
   const code = text.charCodeAt(start);
   if (code >= 0xdc00 && code <= 0xdfff) start += 1;
 
   const tail = text.slice(start);
-  if (start === 0) return tail;
   // Unspaced scripts (CJK) and long tokens have no word start to snap to, so keep the raw tail.
   const firstBreak = tail.search(/\s/);
   return firstBreak === -1 ? tail : tail.slice(firstBreak).trimStart();
@@ -93,18 +78,25 @@ function pack(atoms: readonly string[], { maxChars, overlapChars }: ChunkOptions
       continue;
     }
     if (current.trim()) chunks.push(current.trim());
-    const carried = overlapTail(current, overlapChars);
-    // The carried tail is contiguous with `atom` in the source, so no separator is added.
-    current = carried.length + atom.length <= maxChars ? carried + atom : atom;
+    // Here `current` is longer than overlapChars, the tail is at most that long and atoms leave room for it.
+    current = overlapTail(current, overlapChars) + atom;
   }
   if (current.trim()) chunks.push(current.trim());
   return chunks;
 }
 
 function splitText(text: string, options: ChunkOptions): string[] {
+  const { maxChars, overlapChars } = options;
   // At least 2 UTF-16 units of room, so one surrogate pair always fits in a piece.
-  if (options.maxChars - options.overlapChars < 2) {
-    throw new RangeError('maxChars must exceed overlapChars by at least 2');
+  const valid =
+    Number.isInteger(maxChars) &&
+    Number.isInteger(overlapChars) &&
+    overlapChars >= 0 &&
+    maxChars - overlapChars >= 2;
+  if (!valid) {
+    throw new RangeError(
+      'maxChars and overlapChars must be integers, 0 <= overlapChars <= maxChars - 2',
+    );
   }
   const trimmed = text.trim();
   if (trimmed.length === 0) return [];

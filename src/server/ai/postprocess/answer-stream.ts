@@ -12,7 +12,9 @@ const SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
   '"': '"',
 };
 
+const REPLACEMENT = '\u{FFFD}';
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
 
 /** Pulls the top-level "answer" string out of streamed JSON as it arrives, in linear time. */
 export class AnswerStreamExtractor {
@@ -109,8 +111,10 @@ export class AnswerStreamExtractor {
       this.unicodeDigits += char;
       if (this.unicodeDigits.length < 4) return '';
       this.escape = 'none';
-      const code = Number.parseInt(this.unicodeDigits, 16);
-      return this.consume(Number.isNaN(code) ? '�' : String.fromCharCode(code));
+      const isHex = /^[0-9a-f]{4}$/i.test(this.unicodeDigits);
+      return this.consume(
+        isHex ? String.fromCharCode(Number.parseInt(this.unicodeDigits, 16)) : REPLACEMENT,
+      );
     }
     if (char === '\\') {
       this.escape = 'slash';
@@ -128,13 +132,22 @@ export class AnswerStreamExtractor {
     return this.role === 'answer' ? this.emit(text) : '';
   }
 
-  /** Holds a trailing high surrogate back until its pair arrives, so every delta is well-formed. */
+  /** Keeps every delta well-formed: a split pair waits for its other half, a stray half becomes U+FFFD. */
   private emit(text: string): string {
-    let out = this.pendingHighSurrogate + text;
-    this.pendingHighSurrogate = '';
-    if (out.length > 0 && isHighSurrogate(out.charCodeAt(out.length - 1))) {
-      this.pendingHighSurrogate = out.slice(-1);
-      out = out.slice(0, -1);
+    let out = '';
+    for (const char of text) {
+      const unit = char.charCodeAt(0);
+      if (this.pendingHighSurrogate) {
+        const high = this.pendingHighSurrogate;
+        this.pendingHighSurrogate = '';
+        if (isLowSurrogate(unit)) {
+          out += high + char;
+          continue;
+        }
+        out += REPLACEMENT;
+      }
+      if (isHighSurrogate(unit) && char.length === 1) this.pendingHighSurrogate = char;
+      else out += isLowSurrogate(unit) && char.length === 1 ? REPLACEMENT : char;
     }
     this.full += out;
     return out;
@@ -151,7 +164,7 @@ export class AnswerStreamExtractor {
         this.answerDone = true;
         if (this.pendingHighSurrogate) {
           this.pendingHighSurrogate = '';
-          flushed = this.emit('�');
+          flushed = this.emit(REPLACEMENT);
         }
       }
       if (this.depth === 1) this.expecting = 'comma';

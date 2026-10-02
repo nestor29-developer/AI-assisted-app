@@ -1,4 +1,4 @@
-import { sanitizeText } from '@/server/ai/guardrails/sanitize';
+import { hasHiddenText, sanitizeText } from '@/server/ai/guardrails/sanitize';
 import { detectInjection } from '@/server/ai/guardrails/injection-detector';
 import { estimateEmbeddingCostUsd } from '@/server/ai/pricing';
 import { AiProviderError } from '@/server/ai/providers/errors';
@@ -13,6 +13,7 @@ import {
   toLoggableError,
 } from '@/server/core/errors';
 import type { Logger } from '@/server/core/logger';
+import { truncate } from '@/server/core/text';
 import type { AiRequestRepository } from '@/server/modules/usage/ai-request.repository';
 import { enforceRateLimit, type RateLimiter } from '@/server/modules/usage/rate-limiter';
 import { DOCUMENT_TITLE_MAX } from '@/shared/contracts/documents';
@@ -65,7 +66,7 @@ interface IngestInput {
 
 function deriveTitle(provided: string | null, fileName: string): string {
   const candidate = provided?.trim() || fileName.replace(/\.[^.]+$/, '');
-  return sanitizeText(candidate).text.trim().slice(0, DOCUMENT_TITLE_MAX) || 'Untitled';
+  return truncate(sanitizeText(candidate).text.trim(), DOCUMENT_TITLE_MAX).trimEnd() || 'Untitled';
 }
 
 function batchesOf<T>(items: readonly T[], size: number): T[][] {
@@ -142,9 +143,7 @@ export class DocumentService {
       : [sanitizeText(input.extracted.text)];
     const pageTexts = cleaned.map((result) => result.text);
     const text = input.extracted.pages ? pageTexts.join('\f') : pageTexts[0]!;
-    const hiddenUnicode = cleaned.some(
-      ({ removed }) => removed.tagCharacters > 0 || removed.bidiControls > 0,
-    );
+    const hiddenUnicode = cleaned.some(hasHiddenText);
 
     if (text.length > config.maxDocumentChars) {
       throw new UnprocessableError(

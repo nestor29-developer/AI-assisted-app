@@ -182,3 +182,66 @@ describe('chunkPages', () => {
     }
   });
 });
+
+describe('chunkText: where it cuts', () => {
+  const longWords = (count: number) =>
+    Array.from({ length: count }, (_, i) => `wordnumber${String(i).padStart(4, '0')}`);
+
+  it('starts the overlap of every later chunk at a whole word of the source', () => {
+    const text = longWords(120).join(' ');
+    const wholeWords = new Set(text.split(' '));
+
+    const chunks = chunkText(text, { maxChars: 120, overlapChars: 30 });
+
+    expect(chunks.length).toBeGreaterThan(5);
+    for (const chunk of chunks) {
+      const parts = chunk.text.split(' ');
+      expect(wholeWords.has(parts[0]!)).toBe(true);
+      expect(wholeWords.has(parts.at(-1)!)).toBe(true);
+    }
+  });
+
+  it('cuts between lines when there are no blank lines', () => {
+    const lines = Array.from(
+      { length: 12 },
+      (_, i) => `alpha beta gamma delta epsilon zeta eta theta iota kappa lambda ${i}`,
+    );
+
+    const chunks = chunkText(lines.join('\n'), { maxChars: 150, overlapChars: 0 });
+
+    expect(chunks.length).toBeGreaterThan(3);
+    for (const chunk of chunks) {
+      for (const line of chunk.text.split('\n')) expect(lines).toContain(line);
+    }
+  });
+
+  it('cuts between words, never inside one, when only spaces are available', () => {
+    const text = longWords(80).join(' ');
+    const wholeWords = new Set(text.split(' '));
+
+    const chunks = chunkText(text, { maxChars: 100, overlapChars: 0 });
+
+    expect(chunks.length).toBeGreaterThan(5);
+    for (const chunk of chunks) {
+      for (const word of chunk.text.split(' ')) expect(wholeWords.has(word)).toBe(true);
+    }
+  });
+});
+
+describe('chunkText: options', () => {
+  it.each([
+    ['a negative overlap', { maxChars: 50, overlapChars: -1 }],
+    ['a fractional size', { maxChars: 100.5, overlapChars: 10 }],
+    ['a fractional overlap', { maxChars: 100, overlapChars: 10.5 }],
+    ['a size that is not a number', { maxChars: Number.NaN, overlapChars: 0 }],
+    ['an overlap that is not a number', { maxChars: 100, overlapChars: Number.NaN }],
+    ['an infinite size', { maxChars: Number.POSITIVE_INFINITY, overlapChars: 0 }],
+  ])('rejects %s instead of silently dropping or mis-sizing content', (_label, bad) => {
+    expect(() => chunkText('some text to split', bad)).toThrow(RangeError);
+    expect(() => chunkPages(['some text to split'], bad)).toThrow(RangeError);
+  });
+
+  it('accepts no overlap at all', () => {
+    expect(chunkText('some text to split', { maxChars: 100, overlapChars: 0 })).toHaveLength(1);
+  });
+});

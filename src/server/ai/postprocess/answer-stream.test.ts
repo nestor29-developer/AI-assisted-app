@@ -5,10 +5,10 @@ import { AnswerStreamExtractor } from './answer-stream';
 const ANSWERS = [
   'Employees accrue 1.5 vacation days per month [S1].',
   'She said "never" and used a back\\slash, then a tab\there.\nNew line too.',
-  'Emoji \u{1F389} and a family \u{1F468}‍\u{1F469}‍\u{1F467} stay intact.',
+  'Emoji \u{1F389} and a family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} stay intact.',
   '第一条：员工每月累计年假。',
   'Looks like JSON: {"answer": "nested", "status": "x"} and ] [ , : tokens',
-  'Control \u0001 and separators    are escaped by JSON.stringify.',
+  'Control \u0001 and separators \u{2028}\u{2029} are escaped by JSON.stringify.',
   '',
   'x'.repeat(3_000),
 ];
@@ -32,11 +32,21 @@ function variants(answer: string): { label: string; json: string }[] {
     list: [{ answer: 'ALSO NOT' }],
     answer,
   };
+  const literalsFirst = {
+    count: 42,
+    ratio: -1.5e3,
+    ok: true,
+    off: false,
+    none: null,
+    nested: { deep: { answer: 'NOT THE ANSWER', list: [1, [2, { answer: 'NOR THIS' }]] } },
+    answer,
+  };
   return [
     { label: 'compact', json: JSON.stringify(body) },
     { label: 'pretty', json: JSON.stringify(body, null, 2) },
     { label: 'reordered keys', json: JSON.stringify(reordered) },
     { label: 'decoy keys', json: JSON.stringify(decoy) },
+    { label: 'literals and deep nesting first', json: JSON.stringify(literalsFirst) },
   ];
 }
 
@@ -113,9 +123,24 @@ describe('AnswerStreamExtractor', () => {
     expect(extractor.done).toBe(true);
   });
 
+  it('emits only well-formed text even when the escapes spell a broken pair', () => {
+    const broken = String.raw`{"answer":"x\ud83dy, \ude00 z, \ud83d😀"}`;
+
+    const { deltas } = feed(broken, [...Array(broken.length).keys()]);
+
+    for (const delta of deltas) expect(delta.isWellFormed()).toBe(true);
+    expect(deltas.join('')).toBe('x\u{FFFD}y, \u{FFFD} z, \u{FFFD}\u{1F600}');
+  });
+
+  it('replaces malformed \\u escapes with U+FFFD instead of guessing a character', () => {
+    const json = String.raw`{"answer":"a\u-123b\uZZZZc\u12G4d"}`;
+
+    expect(new AnswerStreamExtractor().push(json)).toBe('a\u{FFFD}b\u{FFFD}c\u{FFFD}d');
+  });
+
   it('replaces a dangling high surrogate with U+FFFD when the string ends', () => {
     const json = String.raw`{"answer":"broken \ud83c"}`;
-    expect(new AnswerStreamExtractor().push(json)).toBe('broken �');
+    expect(new AnswerStreamExtractor().push(json)).toBe('broken \u{FFFD}');
   });
 
   it('ignores a second "answer" key and tolerates garbage without throwing', () => {

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const ANSWER_STATUSES = ['answered', 'partially_answered', 'not_found'] as const;
 export type AnswerStatus = (typeof ANSWER_STATUSES)[number];
+export const MAX_CITATIONS = 8;
 
 /** Per-request schema: sourceId is an enum of the ids sent, so decoding cannot invent a source. */
 export function buildAnswerSchema(sourceIds: readonly [string, ...string[]]) {
@@ -21,8 +22,8 @@ export function buildAnswerSchema(sourceIds: readonly [string, ...string[]]) {
             .describe('ONE contiguous quote, at most 25 words, copied exactly from that source.'),
         }),
       )
-      .max(8)
-      .describe('One entry for each source id cited in the answer; at most 8.'),
+      .max(MAX_CITATIONS)
+      .describe(`One entry for each source id cited in the answer; at most ${MAX_CITATIONS}.`),
     status: z
       .enum(ANSWER_STATUSES)
       .describe(
@@ -35,12 +36,25 @@ export function buildAnswerSchema(sourceIds: readonly [string, ...string[]]) {
   });
 }
 
-/** Lenient on purpose: one bad citation id or a missing list must not discard a good answer. */
+const parsedCitation = z.object({ sourceId: z.string(), quote: z.string() });
+
+/** Lenient on purpose: a null list or one malformed entry must not discard a good answer. */
 export const answerParseSchema = z.object({
   status: z.enum(ANSWER_STATUSES),
   answer: z.string(),
-  citations: z.array(z.object({ sourceId: z.string(), quote: z.string() })).default([]),
-  followUpQuestions: z.array(z.string()).default([]),
+  citations: z
+    .array(z.unknown())
+    .nullish()
+    .transform((items) =>
+      (items ?? []).flatMap((item) => {
+        const parsed = parsedCitation.safeParse(item);
+        return parsed.success ? [parsed.data] : [];
+      }),
+    ),
+  followUpQuestions: z
+    .array(z.unknown())
+    .nullish()
+    .transform((items) => (items ?? []).filter((item): item is string => typeof item === 'string')),
 });
 
 export type AnswerPayload = z.infer<typeof answerParseSchema>;

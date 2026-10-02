@@ -1,53 +1,56 @@
-import type { AnswerPayload } from '@/server/ai/prompts/document-qa/output-schema';
 import { sanitizeText } from '@/server/ai/guardrails/sanitize';
+import { MAX_CITATIONS, type AnswerPayload } from '@/server/ai/prompts/document-qa/output-schema';
+import { truncate } from '@/server/core/text';
 
 import type { ResolvedCitation, SourceRef } from './types';
 
 const MIN_QUOTE_TOKENS = 3;
-const MAX_QUOTE_TOKENS = 80;
+const MIN_CONTENT_TOKENS = 2;
 const MAX_QUOTE_CHARS = 400;
-const SHINGLE_SIZE = 3;
-const SHINGLE_COVERAGE = 0.8;
 const CJK = /([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])/gu;
+const CJK_TOKEN = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]$/u;
+// PDFs break "expense" into "ex-" and "pense" across two lines, and models tend to repair the word.
+const HYPHEN_LINE_BREAK = /(\p{L})[-\u{2010}\u{2011}][ \t]{0,3}\n[ \t]{0,3}(?=\p{L})/gu;
 
 /** Case, punctuation, width and whitespace are ignored; each CJK character counts as a word. */
 export function matchTokens(text: string): string[] {
   return text
     .normalize('NFKC')
+    .toUpperCase() // upper then lower folds "straße" with "STRASSE" and "kız" with "KIZ"
     .toLowerCase()
+    .replace(/i\u{307}/gu, 'i')
+    .replace(/['’ʼ]/g, '') // "can't" and "cant" are one word
+    .replace(/(\d)[.,](?=\d{3}(?!\d))/g, '$1') // 1,000 and 1000 are one number
     .replace(CJK, ' $1 ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ')
     .split(' ')
     .filter(Boolean);
 }
 
-function shingles(tokens: readonly string[]): Set<string> {
-  const result = new Set<string>();
-  for (let i = 0; i + SHINGLE_SIZE <= tokens.length; i += 1) {
-    result.add(tokens.slice(i, i + SHINGLE_SIZE).join(' '));
-  }
-  return result;
+/** "of the company" is in every document and proves nothing; numbers and CJK characters count as content. */
+const isContentToken = (token: string) =>
+  token.length >= 4 || /\p{N}/u.test(token) || CJK_TOKEN.test(token);
+
+function haystacks(sourceText: string): string[] {
+  const variants = new Set([sourceText, sourceText.replace(HYPHEN_LINE_BREAK, '$1')]);
+  return [...variants].map((text) => ` ${matchTokens(text).join(' ')} `);
 }
 
-/** True if the quote is in the source, verbatim or with a few words changed; word order matters. */
+/** True only when the whole quote appears in the source, word for word. A near miss is not a match. */
 export function verifyQuote(quote: string, sourceText: string): boolean {
-  const quoteTokens = matchTokens(quote).slice(0, MAX_QUOTE_TOKENS);
-  if (quoteTokens.length < MIN_QUOTE_TOKENS) return false;
-  const sourceTokens = matchTokens(sourceText);
+  const tokens = matchTokens(quote);
+  if (tokens.length < MIN_QUOTE_TOKENS) return false;
+  if (tokens.filter(isContentToken).length < MIN_CONTENT_TOKENS) return false;
 
-  const haystack = ` ${sourceTokens.join(' ')} `;
-  if (haystack.includes(` ${quoteTokens.join(' ')} `)) return true;
-
-  const wanted = shingles(quoteTokens);
-  const available = shingles(sourceTokens);
-  let found = 0;
-  for (const shingle of wanted) if (available.has(shingle)) found += 1;
-  return wanted.size > 0 && found / wanted.size >= SHINGLE_COVERAGE;
+  const needle = ` ${tokens.join(' ')} `;
+  return haystacks(sourceText).some((haystack) => haystack.includes(needle));
 }
 
-/** The ids the model wrote into its answer text, such as the S2 in "[S2]". */
-export function extractMarkers(answer: string): string[] {
-  return [...new Set([...answer.matchAll(/\[(S\d+)\]/g)].map((match) => match[1]!))];
+/** Caps the displayed quote without ending on half a word, which could never match the source. */
+function clipQuote(text: string): string {
+  if (text.length <= MAX_QUOTE_CHARS) return text;
+  const cut = truncate(text, MAX_QUOTE_CHARS);
+  return /\s/u.test(text.charAt(cut.length)) ? cut : cut.replace(/\s\S*$/u, '');
 }
 
 export interface ResolvedCitations {
@@ -66,12 +69,13 @@ export function resolveCitations(
   const seen = new Set<string>();
 
   for (const citation of citations) {
+    if (resolved.length >= MAX_CITATIONS) break;
     const source = byId.get(citation.sourceId);
     if (!source) {
       invalid.add(citation.sourceId);
       continue;
     }
-    const quote = sanitizeText(citation.quote).text.trim().slice(0, MAX_QUOTE_CHARS);
+    const quote = clipQuote(sanitizeText(citation.quote).text.trim());
     const key = `${source.id}|${matchTokens(quote).join(' ')}`;
     if (seen.has(key)) continue;
     seen.add(key);

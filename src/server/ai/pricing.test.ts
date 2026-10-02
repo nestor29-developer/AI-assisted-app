@@ -31,11 +31,39 @@ describe('estimateCostUsd', () => {
   it('returns null, not a misleading zero, for a model it has no price for', () => {
     expect(estimateCostUsd('some-future-model', usage)).toBeNull();
   });
+
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'treats the object key %j as an unknown model instead of throwing',
+    (model) => {
+      expect(estimateCostUsd(model, usage)).toBeNull();
+      expect(estimateEmbeddingCostUsd(model, 100)).toBeNull();
+    },
+  );
+
+  it.each([
+    ['negative input', { ...usage, inputTokens: -5 }],
+    ['negative output', { ...usage, outputTokens: -1 }],
+    ['negative thinking', { ...usage, thinkingTokens: -1 }],
+    ['not-a-number', { ...usage, inputTokens: Number.NaN }],
+    ['infinite', { ...usage, outputTokens: Number.POSITIVE_INFINITY }],
+  ])('refuses to price %s token counts', (_label, bad) => {
+    expect(estimateCostUsd('gemini-3.8-flash', bad, promo)).toBeNull();
+  });
+
+  it('refuses to guess the price for an invalid date', () => {
+    expect(estimateCostUsd('gemini-3.8-flash', usage, new Date('nope'))).toBeNull();
+    expect(estimateEmbeddingCostUsd('gemini-embedding-2', 100, new Date('nope'))).toBeNull();
+  });
 });
 
 describe('estimateEmbeddingCostUsd', () => {
   it('prices input tokens only', () => {
     expect(estimateEmbeddingCostUsd('gemini-embedding-2', 1_000_000)).toBeCloseTo(0.2, 9);
     expect(estimateEmbeddingCostUsd('unknown-embedder', 100)).toBeNull();
+  });
+
+  it('refuses nonsense token counts', () => {
+    expect(estimateEmbeddingCostUsd('gemini-embedding-2', -1)).toBeNull();
+    expect(estimateEmbeddingCostUsd('gemini-embedding-2', Number.NaN)).toBeNull();
   });
 });

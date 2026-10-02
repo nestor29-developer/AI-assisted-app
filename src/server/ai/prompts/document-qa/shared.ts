@@ -1,5 +1,8 @@
+import { truncate } from '@/server/core/text';
+
 import type { BuiltPrompt, HistoryTurn, PromptInput, PromptSource } from '../types';
 
+import { stripSourceMarkers } from './markers';
 import { buildAnswerSchema, toResponseJsonSchema } from './output-schema';
 
 export const DOCUMENT_QA_PROMPT_ID = 'document-qa';
@@ -8,13 +11,11 @@ const MAX_HISTORY_TURN_CHARS = 1_000;
 /** 12 random bytes is 96 bits: a document cannot guess the tag that would close its own block. */
 const MIN_NONCE_CHARS = 16;
 
-/** Source ids are renumbered on every request, so an old [S1] in history would point at the wrong text. */
-const withoutSourceMarkers = (text: string) => text.replace(/\s*\[S\d+\]/g, '');
-
 function renderHistory(history: readonly HistoryTurn[], nonce: string): string {
   if (history.length === 0) return '';
   const turns = history.map(({ role, content }) => {
-    const text = withoutSourceMarkers(content).slice(0, MAX_HISTORY_TURN_CHARS);
+    // Source ids are renumbered on every request, so an old [S1] would point at the wrong text.
+    const text = truncate(stripSourceMarkers(content), MAX_HISTORY_TURN_CHARS);
     return `<turn-${nonce} role="${role}">\n${text}\n</turn-${nonce}>`;
   });
   return `<history-${nonce}>\n${turns.join('\n')}\n</history-${nonce}>\n\n`;

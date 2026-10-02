@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AiProviderError } from './errors';
 import type { RetryPolicy } from './retry';
-import { backoffDelayMs, resolveDelayMs } from './retry';
+import { abortableSleep, backoffDelayMs, resolveDelayMs } from './retry';
 import { RetryingEmbeddingProvider } from './retrying-embedding';
 import { RetryingLlmProvider } from './retrying-llm';
 import type { EmbeddingProvider, LlmEvent, LlmProvider, LlmRequest } from './types';
@@ -224,5 +224,127 @@ describe('RetryingEmbeddingProvider', () => {
       new RetryingEmbeddingProvider(inner, p).embed(['a'], 'query'),
     ).rejects.toBeInstanceOf(AiProviderError);
     expect(calls()).toBe(2);
+  });
+
+  it.each([
+    ['a non-retryable provider error', new AiProviderError('bad key', { retryable: false })],
+    ['an error that is not from the provider', new TypeError('bug')],
+  ])('does not retry %s', async (_label, error) => {
+    const { policy: p, sleep } = policy();
+    const embed = vi.fn(async () => {
+      throw error;
+    });
+    const inner: EmbeddingProvider = { name: 'f', model: 'm', dimensions: 3, embed };
+
+    await expect(new RetryingEmbeddingProvider(inner, p).embed(['a'], 'query')).rejects.toBe(error);
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('passes the texts, purpose and options (including the abort signal) through untouched', async () => {
+    const { policy: p } = policy();
+    const embed = vi.fn(async () => ({ vectors: [[1, 0, 0]], inputTokens: 1 }));
+    const inner: EmbeddingProvider = { name: 'f', model: 'm', dimensions: 3, embed };
+    const options = { title: 'Handbook', signal: new AbortController().signal };
+
+    await new RetryingEmbeddingProvider(inner, p).embed(['a'], 'document', options);
+
+    expect(embed).toHaveBeenCalledWith(['a'], 'document', options);
+  });
+
+  it('stops retrying once the caller has aborted, without sleeping', async () => {
+    const { policy: p, sleep } = policy();
+    const controller = new AbortController();
+    const embed = vi.fn(async () => {
+      controller.abort();
+      throw transient();
+    });
+    const inner: EmbeddingProvider = { name: 'f', model: 'm', dimensions: 3, embed };
+
+    await expect(
+      new RetryingEmbeddingProvider(inner, p).embed(['a'], 'query', { signal: controller.signal }),
+    ).rejects.toBeInstanceOf(AiProviderError);
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('waits for the provider-supplied Retry-After, and fails fast when it is too long', async () => {
+    const { policy: p, sleep } = policy({ maxDelayMs: 1_000 });
+    const embed = vi
+      .fn<EmbeddingProvider['embed']>()
+      .mockRejectedValueOnce(transient(700))
+      .mockResolvedValueOnce({ vectors: [[1, 0, 0]], inputTokens: 1 });
+    const inner: EmbeddingProvider = { name: 'f', model: 'm', dimensions: 3, embed };
+
+    await new RetryingEmbeddingProvider(inner, p).embed(['a'], 'query');
+    expect(sleep).toHaveBeenCalledWith(700, undefined);
+
+    const tooLong = vi.fn(async () => {
+      throw transient(5_000);
+    });
+    await expect(
+      new RetryingEmbeddingProvider({ ...inner, embed: tooLong }, p).embed(['a'], 'query'),
+    ).rejects.toBeInstanceOf(AiProviderError);
+    expect(tooLong).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes the wrapped provider identity', () => {
+    const { inner } = flakyEmbedder(0);
+    const wrapped = new RetryingEmbeddingProvider(inner);
+
+    expect([wrapped.name, wrapped.model, wrapped.dimensions]).toEqual(['fake', 'm', 3]);
+  });
+});
+
+describe('abortableSleep', () => {
+  it('resolves after the delay and leaves no abort listener behind', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const removeSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+      const sleeping = abortableSleep(250, controller.signal);
+      await vi.advanceTimersByTimeAsync(250);
+
+      await expect(sleeping).resolves.toBeUndefined();
+      expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects immediately with the abort reason when the signal was already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('already gone'));
+
+    await expect(abortableSleep(10_000, controller.signal)).rejects.toThrow('already gone');
+  });
+
+  it('rejects as soon as the signal aborts, instead of waiting out the delay', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const sleeping = abortableSleep(60_000, controller.signal);
+      const outcome = expect(sleeping).rejects.toThrow('stop now');
+
+      controller.abort(new Error('stop now'));
+
+      await outcome;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('works without a signal', async () => {
+    vi.useFakeTimers();
+    try {
+      const sleeping = abortableSleep(5);
+      await vi.advanceTimersByTimeAsync(5);
+
+      await expect(sleeping).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

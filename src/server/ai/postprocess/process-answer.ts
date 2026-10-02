@@ -1,8 +1,10 @@
 import { sanitizeText } from '@/server/ai/guardrails/sanitize';
+import { extractSourceMarkers } from '@/server/ai/prompts/document-qa/markers';
 import type { FinishReason } from '@/server/ai/providers/types';
+import { truncate } from '@/server/core/text';
 
 import { parseAnswer } from './answer-parser';
-import { extractMarkers, resolveCitations } from './citations';
+import { resolveCitations } from './citations';
 import { scoreConfidence } from './confidence';
 import type { AnswerWarning, ProcessedAnswer, SourceRef } from './types';
 
@@ -25,6 +27,9 @@ export interface ProcessAnswerInput {
 
 const clean = (text: string) => sanitizeText(text).text.trim();
 
+const clampAnswer = (text: string) =>
+  text.length > MAX_ANSWER_CHARS ? `${truncate(text, MAX_ANSWER_CHARS).trimEnd()}…` : text;
+
 function withoutAnswer(
   status: 'declined' | 'unreadable',
   answer: string,
@@ -44,7 +49,7 @@ export function processAnswer(input: ProcessAnswerInput): ProcessedAnswer {
   const answerText = parsed.ok ? clean(parsed.payload.answer) : '';
 
   if (!parsed.ok || answerText === '') {
-    const salvaged = clean(input.streamedAnswer ?? '');
+    const salvaged = clampAnswer(clean(input.streamedAnswer ?? ''));
     const warnings: AnswerWarning[] = truncated
       ? ['MALFORMED_OUTPUT', 'TRUNCATED']
       : ['MALFORMED_OUTPUT'];
@@ -55,10 +60,7 @@ export function processAnswer(input: ProcessAnswerInput): ProcessedAnswer {
   const warnings = new Set<AnswerWarning>();
   if (truncated) warnings.add('TRUNCATED');
 
-  const answer =
-    answerText.length > MAX_ANSWER_CHARS
-      ? `${answerText.slice(0, MAX_ANSWER_CHARS).trimEnd()}…`
-      : answerText;
+  const answer = clampAnswer(answerText);
   if (answer !== answerText) warnings.add('TRUNCATED');
 
   if (payload.status === 'not_found') {
@@ -74,10 +76,15 @@ export function processAnswer(input: ProcessAnswerInput): ProcessedAnswer {
 
   const { citations, invalidReferences } = resolveCitations(payload.citations, sources);
   const knownIds = new Set(sources.map((source) => source.id));
-  const unknownMarkers = extractMarkers(answer).filter((id) => !knownIds.has(id));
+  const citedIds = new Set(citations.map((citation) => citation.sourceId));
+  const markers = extractSourceMarkers(answer);
+  const unknownMarkers = markers.filter((id) => !knownIds.has(id));
+  const uncitedMarkers = markers.filter((id) => knownIds.has(id) && !citedIds.has(id));
+
   if (invalidReferences.length > 0 || unknownMarkers.length > 0)
     warnings.add('INVALID_SOURCE_REFERENCE');
   if (citations.length === 0) warnings.add('NO_CITATIONS');
+  else if (uncitedMarkers.length > 0) warnings.add('UNCITED_MARKER');
   if (citations.some((citation) => !citation.verified)) warnings.add('UNVERIFIED_CITATION');
 
   return {
@@ -85,10 +92,12 @@ export function processAnswer(input: ProcessAnswerInput): ProcessedAnswer {
     answer,
     citations,
     followUpQuestions: payload.followUpQuestions
-      .map((question) => clean(question).slice(0, MAX_FOLLOW_UP_CHARS))
+      .map((question) => truncate(clean(question), MAX_FOLLOW_UP_CHARS).trimEnd())
       .filter((question) => question.length > 0)
       .slice(0, MAX_FOLLOW_UPS),
-    confidence: scoreConfidence(payload.status, citations),
+    confidence: scoreConfidence(payload.status, citations, {
+      unbackedClaims: warnings.has('INVALID_SOURCE_REFERENCE') || warnings.has('UNCITED_MARKER'),
+    }),
     warnings: [...warnings],
   };
 }

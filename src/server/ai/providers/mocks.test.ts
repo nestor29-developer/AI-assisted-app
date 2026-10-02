@@ -206,4 +206,19 @@ describe('MockLlmProvider', () => {
       AiProviderError,
     );
   });
+
+  it('writes its JSON keys in the order of the real schema, so streaming behaves like Gemini', async () => {
+    for (const question of ['vacation days per month', 'What is the CEO salary?']) {
+      const { text } = await run(llm, request(question));
+
+      expect(Object.keys(JSON.parse(text) as object)).toEqual(Object.keys(schema.shape));
+    }
+  });
+
+  it.each([0, -1, 2.5, Number.NaN])(
+    'rejects the chunk size %s instead of failing mid-stream',
+    (chunkSize) => {
+      expect(() => new MockLlmProvider({ chunkSize })).toThrow(RangeError);
+    },
+  );
 });

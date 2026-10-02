@@ -6,6 +6,7 @@ export type AnswerWarning =
   | 'NO_CITATIONS'
   | 'UNVERIFIED_CITATION'
   | 'INVALID_SOURCE_REFERENCE'
+  | 'UNCITED_MARKER'
   | 'TRUNCATED'
   | 'MALFORMED_OUTPUT';
 

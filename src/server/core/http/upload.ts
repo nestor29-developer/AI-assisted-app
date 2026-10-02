@@ -4,6 +4,8 @@ import {
   ValidationError,
 } from '@/server/core/errors';
 
+import { truncate } from '@/server/core/text';
+
 import { readBodyCapped } from './input';
 
 /** Room for multipart boundaries and the other form fields around the file itself. */
@@ -41,7 +43,7 @@ export async function readMultipartUpload(request: Request, maxFileBytes: number
   return {
     title: typeof title === 'string' ? title : null,
     file: {
-      name: file.name.slice(0, MAX_FILENAME_CHARS),
+      name: truncate(file.name, MAX_FILENAME_CHARS),
       bytes: new Uint8Array(await file.arrayBuffer()),
     },
   };
