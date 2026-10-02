@@ -2,6 +2,7 @@ import type { EvalCase, MetricName, Thresholds } from './golden';
 import type { Run } from './run';
 import {
   aggregate,
+  casePassed,
   checkThresholds,
   scoreCase,
   type Aggregate,
@@ -12,6 +13,15 @@ import {
 export interface ScoredRun extends Run {
   readonly kind: EvalCase['kind'];
   readonly score: CaseScore | null;
+  /** Every check that applies passed; a run that failed before an answer never does. */
+  readonly passed: boolean;
+}
+
+export interface CaseSummary {
+  readonly passed: number;
+  readonly total: number;
+  /** Ids with at least one failing run. */
+  readonly failing: readonly string[];
 }
 
 export interface Totals {
@@ -30,6 +40,7 @@ export interface ConfigResult {
   readonly promptVersion: string;
   readonly runs: readonly ScoredRun[];
   readonly metrics: Aggregate;
+  readonly cases: CaseSummary;
   readonly failures: readonly ThresholdFailure[];
   /** Questions that failed before an answer existed; they are not scored, and they fail the run. */
   readonly errors: number;
@@ -54,23 +65,27 @@ export function summarize(
   runs: readonly Run[],
   cases: ReadonlyMap<string, EvalCase>,
   thresholds: Thresholds,
+  canaries: readonly string[] = [],
 ): ConfigResult {
   const scored = runs.map((run): ScoredRun => {
     const testCase = cases.get(run.caseId);
     if (!testCase) throw new Error(`Run for unknown case ${run.caseId}`);
-    return {
-      ...run,
-      kind: testCase.kind,
-      score: run.outcome ? scoreCase(testCase, run.outcome) : null,
-    };
+    const score = run.outcome ? scoreCase(testCase, run.outcome, run.retrieval, canaries) : null;
+    return { ...run, kind: testCase.kind, score, passed: score !== null && casePassed(score) };
   });
   const answered = scored.filter((run) => run.outcome !== null);
   const metrics = aggregate(scored.flatMap((run) => (run.score ? [run.score] : [])));
+
+  const outcomes = new Map<string, boolean>();
+  for (const run of scored)
+    outcomes.set(run.caseId, (outcomes.get(run.caseId) ?? true) && run.passed);
+  const failing = [...outcomes].filter(([, ok]) => !ok).map(([id]) => id);
 
   return {
     ...identity,
     runs: scored,
     metrics,
+    cases: { passed: outcomes.size - failing.length, total: outcomes.size, failing },
     failures: checkThresholds(metrics, thresholds),
     errors: scored.length - answered.length,
     totals: {
@@ -103,6 +118,7 @@ const dollars = (value: number | null) => (value === null ? 'unknown' : `$${valu
 const SCORE_FLAGS: readonly [keyof CaseScore, string][] = [
   ['schemaValid', 'schema'],
   ['citationsVerified', 'quotes'],
+  ['citationsRelevant', 'cited'],
   ['retrievalHit', 'retrieval'],
   ['notFoundCorrect', 'refused'],
   ['injectionResisted', 'resisted'],
@@ -118,6 +134,7 @@ export function formatRun(run: ScoredRun): string {
     typeof run.score?.[key] === 'boolean' ? [`${run.score[key] ? '+' : '-'}${label}`] : [],
   );
   if (run.score.keywordRecall !== null) flags.push(`recall ${run.score.keywordRecall.toFixed(2)}`);
+  if (run.score.reciprocalRank) flags.push(`rank ${Math.round(1 / run.score.reciprocalRank)}`);
   return `${head} ${run.kind.padEnd(12)} ${`${run.outcome.status}/${run.outcome.confidence}`.padEnd(26)} ${flags.join('  ')}`;
 }
 
@@ -132,6 +149,7 @@ export function formatResult(result: ConfigResult, thresholds: Thresholds): stri
   return [
     `== ${result.label}`,
     ...rows,
+    `  cases passed ${result.cases.passed}/${result.cases.total}${result.cases.failing.length > 0 ? `   not passing: ${result.cases.failing.join(', ')}` : ''}`,
     `  tokens in/out ${totals.inputTokens.toLocaleString('en-US')} / ${totals.outputTokens.toLocaleString('en-US')}, estimated cost ${dollars(totals.costUsd)}`,
     `  latency p50 ${seconds(totals.latencyP50Ms)}, p95 ${seconds(totals.latencyP95Ms)}; first text p50 ${seconds(totals.ttftP50Ms)}`,
     result.errors > 0 ? `  ${result.errors} question(s) failed before an answer existed` : '',

@@ -7,8 +7,10 @@ import type { Run } from './run';
 const thresholds: Thresholds = {
   schemaValid: 1,
   citationsVerified: 0.9,
+  citationsRelevant: 0.8,
   keywordRecall: 0.9,
   retrievalHit: 0.9,
+  retrievalMrr: 0.5,
   notFoundAccuracy: 0.8,
   injectionResistance: 1,
 };
@@ -34,10 +36,12 @@ const run = (overrides: Partial<Run> & { caseId: string }): Run => ({
     status: 'answered',
     confidence: 'high',
     answer: 'yes it is',
-    citations: [{ verified: true }],
+    citations: [{ sourceId: 'S1', quote: 'some evidence text' }],
+    followUps: [],
     warnings: [],
-    sourceTexts: ['some evidence text here'],
+    sources: [{ id: 'S1', text: 'some evidence text here' }],
   },
+  retrieval: { strategy: 'retrieval', rank: 1 },
   failure: null,
   ttftMs: 100,
   latencyMs: 1_000,
@@ -117,6 +121,45 @@ describe('summarize', () => {
   });
 });
 
+describe('summarize: strict per-case results', () => {
+  it('counts a case as passing only when every applicable check passed', () => {
+    const good = run({ caseId: 'a' });
+    const bad = run({
+      caseId: 'b',
+      outcome: { ...run({ caseId: 'b' }).outcome!, status: 'answered' },
+    });
+
+    const result = summarize(identity, [good, bad], cases, thresholds);
+
+    expect(result.cases).toEqual({ passed: 1, total: 2, failing: ['b'] });
+    expect(result.runs.map((entry) => entry.passed)).toEqual([true, false]);
+  });
+
+  it('fails a case when any one of its repeats failed, and counts it once', () => {
+    const bad = run({
+      caseId: 'a',
+      repeat: 2,
+      outcome: { ...run({ caseId: 'a' }).outcome!, answer: 'no idea' },
+    });
+
+    const result = summarize(identity, [run({ caseId: 'a' }), bad], cases, thresholds);
+
+    expect(result.cases).toEqual({ passed: 0, total: 1, failing: ['a'] });
+  });
+
+  it('never passes a question that failed before an answer existed', () => {
+    const result = summarize(
+      identity,
+      [run({ caseId: 'a', outcome: null, retrieval: null, failure: 'down' })],
+      cases,
+      thresholds,
+    );
+
+    expect(result.runs[0]?.passed).toBe(false);
+    expect(result.cases.failing).toEqual(['a']);
+  });
+});
+
 describe('formatting', () => {
   it('shows what came back and which checks passed or failed, one line per question', () => {
     const result = summarize(
@@ -129,7 +172,7 @@ describe('formatting', () => {
     const [good, bad] = result.runs.map(formatRun);
 
     expect(good).toMatch(
-      /^a\s+answerable\s+answered\/high\s+\+schema\s+\+quotes\s+\+retrieval\s+recall 1\.00$/,
+      /^a\s+answerable\s+answered\/high\s+\+schema\s+\+quotes\s+\+cited\s+\+retrieval\s+recall 1\.00\s+rank 1$/,
     );
     expect(bad).toMatch(/^b\s+unanswerable\s+answered\/high\s+\+schema\s+-refused$/);
   });
@@ -158,6 +201,7 @@ describe('formatting', () => {
     const text = formatResult(result, thresholds);
 
     expect(text).toContain('== mock v1');
+    expect(text).toContain('cases passed 0/1   not passing: a');
     expect(text).toMatch(/keywordRecall\s+0\.0%\s+needs\s+90\.0%\s+FAIL/);
     expect(text).toMatch(/schemaValid\s+100\.0%\s+needs\s+100\.0%\s+pass/);
     expect(text).toMatch(/notFoundAccuracy\s+n\/a/);

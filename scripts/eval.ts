@@ -4,7 +4,16 @@ import { parseArgs } from 'node:util';
 
 import { createAiProviders } from '@/server/ai/providers/factory';
 import type { AppConfig } from '@/server/core/config/env';
+import { DEFAULT_FULL_CONTEXT_MAX_TOKENS, DEFAULT_RAG_TOP_K } from '@/server/core/constants';
 
+import {
+  baselineApplies,
+  compareToBaseline,
+  formatBaselineCheck,
+  loadBaseline,
+  saveBaseline,
+  toBaseline,
+} from './eval/baseline';
 import { loadGolden, type EvalCase } from './eval/golden';
 import {
   formatComparison,
@@ -31,12 +40,16 @@ const USAGE = `Runs the golden questions through the real pipeline and scores th
   --cases id[,id]          only these cases
   --delay-ms N             pause between questions (default 0 for mock, 400 for gemini)
   --report PATH            where to write the JSON report (default evals/reports/)
+  --update-baseline        record which cases pass now (one prompt and model, all cases, no failed questions)
   --no-fail                print results but always exit 0
+
+A committed baseline (evals/baseline.<provider>.json) makes a case that used to pass and now fails
+fail the run, even when the percentages would absorb it.
 `;
 
 const AI_DEFAULTS = {
-  fullContextMaxTokens: 3_000,
-  ragTopK: 6,
+  fullContextMaxTokens: DEFAULT_FULL_CONTEXT_MAX_TOKENS,
+  ragTopK: DEFAULT_RAG_TOP_K,
   llmTimeoutMs: 120_000,
   mockChunkDelayMs: 1,
 };
@@ -67,6 +80,7 @@ async function main(): Promise<number> {
       cases: { type: 'string' },
       'delay-ms': { type: 'string' },
       report: { type: 'string' },
+      'update-baseline': { type: 'boolean' },
       'no-fail': { type: 'boolean' },
       help: { type: 'boolean' },
     },
@@ -104,8 +118,11 @@ async function main(): Promise<number> {
   if (unknown.length > 0) throw new Error(`Unknown case id(s): ${unknown.join(', ')}`);
   const byId = new Map(cases.map((testCase) => [testCase.id, testCase]));
   const thresholds = golden.thresholds[provider];
+  const baselinePath = resolve(`evals/baseline.${provider}.json`);
+  const baseline = await loadBaseline(baselinePath);
 
   const results: ConfigResult[] = [];
+  let regressions = 0;
   for (const model of models) {
     for (const promptVersion of prompts) {
       const label = provider === 'mock' ? `mock ${promptVersion}` : `${model} ${promptVersion}`;
@@ -130,10 +147,21 @@ async function main(): Promise<number> {
         cases,
         { repeats, delayMs },
       );
-      const result = summarize({ label, provider, model, promptVersion }, runs, byId, thresholds);
+      const result = summarize(
+        { label, provider, model, promptVersion },
+        runs,
+        byId,
+        thresholds,
+        golden.canaries,
+      );
       results.push(result);
       console.log(result.runs.map(formatRun).join('\n'));
       console.log(formatResult(result, thresholds));
+      if (baseline && baselineApplies(baseline, result)) {
+        const check = compareToBaseline(baseline, result);
+        regressions += check.regressions.length;
+        console.log(formatBaselineCheck(check));
+      }
     }
   }
 
@@ -149,8 +177,23 @@ async function main(): Promise<number> {
   );
   console.log(`\nreport written to ${reportPath}`);
 
-  const ok = results.every(passed);
-  console.log(ok ? 'eval passed' : 'eval FAILED: a threshold was missed or a question failed');
+  if (values['update-baseline']) {
+    const [only] = results;
+    if (results.length !== 1 || !only) {
+      throw new Error('--update-baseline needs exactly one prompt and one model');
+    }
+    if (wanted.size > 0) throw new Error('--update-baseline needs every case, not --cases');
+    if (only.errors > 0) throw new Error('--update-baseline refuses a run with failed questions');
+    await saveBaseline(baselinePath, toBaseline(only));
+    console.log(`baseline written to ${baselinePath}`);
+  }
+
+  const ok = results.every(passed) && regressions === 0;
+  console.log(
+    ok
+      ? 'eval passed'
+      : 'eval FAILED: a threshold was missed, a case regressed or a question failed',
+  );
   return ok || values['no-fail'] ? 0 : 1;
 }
 

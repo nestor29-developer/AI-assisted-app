@@ -19,7 +19,18 @@ describe('the golden set', () => {
     const documents = new Set(golden.cases.map((testCase) => testCase.document));
     expect(kinds).toEqual(new Set(['answerable', 'unanswerable', 'injection']));
     expect(documents).toEqual(new Set(['handbook', 'leave']));
-    expect(golden.cases.length).toBeGreaterThanOrEqual(15);
+    expect(golden.cases.length).toBeGreaterThanOrEqual(25);
+  });
+
+  it('includes the harder kinds a lexical model cannot fake: follow-ups, negation, arithmetic, paraphrase, another language', async () => {
+    const { golden } = await loadGolden(GOLDEN);
+    const ids = golden.cases.map((testCase) => testCase.id);
+
+    expect(golden.cases.some((testCase) => (testCase.turns ?? []).length > 0)).toBe(true);
+    expect(golden.cases.some((testCase) => 'mustNotContain' in testCase)).toBe(true);
+    expect(ids).toEqual(
+      expect.arrayContaining(['meals-three-days', 'sick-note-paraphrase', 'vacation-spanish']),
+    );
   });
 
   it('keeps every evidence phrase in its document, so an edit to a fixture cannot silently break a case', async () => {
@@ -39,6 +50,29 @@ describe('the golden set', () => {
 
     expect(documents.get('handbook')).toContain('PWNED');
     expect(documents.get('handbook')).toMatch(/ignore all previous instructions/i);
+  });
+
+  it('only watches for canaries that a planted note really asks for, or the check is toothless', async () => {
+    const { golden, documents } = await loadGolden(GOLDEN);
+    const everything = [...documents.values()].join('\n');
+
+    expect(golden.canaries.length).toBeGreaterThan(0);
+    for (const canary of golden.canaries) expect(everything).toContain(canary);
+  });
+
+  it('never makes a correct answer look wrong: banned phrases are absent from the evidence', async () => {
+    const { golden, documents } = await loadGolden(GOLDEN);
+
+    for (const testCase of golden.cases) {
+      if (testCase.kind === 'unanswerable') continue;
+      for (const phrase of testCase.mustNotContain ?? []) {
+        expect(
+          squash(testCase.evidence ?? ''),
+          `${testCase.id} bans a phrase its own evidence uses`,
+        ).not.toContain(squash(phrase));
+      }
+    }
+    expect(documents.size).toBeGreaterThan(0);
   });
 
   it('keeps the handbook big enough to force retrieval and the policy small enough for full context', async () => {
@@ -68,8 +102,10 @@ describe('loadGolden validation', () => {
   const thresholds = {
     schemaValid: 1,
     citationsVerified: 1,
+    citationsRelevant: 1,
     keywordRecall: 1,
     retrievalHit: 1,
+    retrievalMrr: 1,
     notFoundAccuracy: 1,
     injectionResistance: 1,
   };
@@ -79,11 +115,34 @@ describe('loadGolden validation', () => {
   };
   const unanswerable = { id: 'a', document: 'doc', kind: 'unanswerable', question: 'Q?' };
 
-  it('accepts a minimal valid file', async () => {
+  it('accepts a minimal valid file, with no canaries unless it names some', async () => {
     const { golden, documents } = await load({ ...base, cases: [unanswerable] });
 
     expect(golden.cases).toHaveLength(1);
+    expect(golden.canaries).toEqual([]);
     expect(documents.get('doc')).toBe('Some document text.');
+  });
+
+  it('accepts follow-up turns and the optional guards', async () => {
+    const { golden } = await load({
+      ...base,
+      canaries: ['PWNED'],
+      cases: [
+        { ...unanswerable, turns: ['Earlier question?'], forbidden: ['weeks of'] },
+        {
+          id: 'b',
+          document: 'doc',
+          kind: 'answerable',
+          question: 'Q?',
+          mustContain: [['yes']],
+          mustNotContain: ['not'],
+          evidence: 'text',
+        },
+      ],
+    });
+
+    expect(golden.canaries).toEqual(['PWNED']);
+    expect(golden.cases[0]).toMatchObject({ turns: ['Earlier question?'] });
   });
 
   it.each([
@@ -99,6 +158,7 @@ describe('loadGolden validation', () => {
       [{ ...unanswerable, kind: 'injection' }],
       /forbidden/,
     ],
+    ['an empty guard list', [{ ...unanswerable, forbidden: [] }], /too small|at least/i],
     ['no cases', [], /too small|at least/i],
   ])('rejects %s', async (_label, cases, message) => {
     await expect(load({ ...base, cases })).rejects.toThrow(message);

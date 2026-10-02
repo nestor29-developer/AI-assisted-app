@@ -2,6 +2,7 @@ import 'server-only';
 
 import { z } from 'zod';
 
+import { DEFAULT_FULL_CONTEXT_MAX_TOKENS, DEFAULT_RAG_TOP_K } from '@/server/core/constants';
 import { DEFAULT_MAX_PDF_PAGES, DEFAULT_MAX_UPLOAD_MB } from '@/shared/contracts/documents';
 
 export class ConfigError extends Error {
@@ -133,8 +134,8 @@ const envSchema = databaseEnvSchema.extend({
     .string()
     .regex(/^v\d+$/, 'must look like v1, v2, ...')
     .default('v1'),
-  FULL_CONTEXT_MAX_TOKENS: int(3000),
-  RAG_TOP_K: int(6, 20),
+  FULL_CONTEXT_MAX_TOKENS: int(DEFAULT_FULL_CONTEXT_MAX_TOKENS),
+  RAG_TOP_K: int(DEFAULT_RAG_TOP_K, 20),
   LLM_TIMEOUT_MS: int(60_000),
   MOCK_LLM_CHUNK_DELAY_MS: int(15, 5_000),
 

@@ -15,7 +15,8 @@ import { InMemoryMessageRepository } from '@/test/fakes/message-repository';
 import { InMemoryRateLimiter } from '@/test/fakes/rate-limiter';
 
 import type { EvalCase } from './golden';
-import type { Outcome } from './score';
+import type { Outcome, Retrieval } from './score';
+import { hasWords } from './text';
 
 export interface Setup {
   readonly providers: AiProviders;
@@ -31,6 +32,8 @@ export interface Run {
   readonly repeat: number;
   /** Null when the question failed before an answer existed. */
   readonly outcome: (Outcome & { readonly confidence: string }) | null;
+  /** Null when the case names no evidence to look for. */
+  readonly retrieval: Retrieval | null;
   readonly failure: string | null;
   readonly ttftMs: number | null;
   readonly latencyMs: number;
@@ -40,6 +43,11 @@ export interface Run {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Reads a stream to its end; the reply is what the service stores, not what we keep here. */
+async function drain(stream: AsyncIterable<unknown>): Promise<void> {
+  for await (const event of stream) void event;
+}
 
 /** The real services over in-memory stores (no database); each question gets an empty conversation. */
 function createHarness(setup: Setup, texts: ReadonlyMap<string, string>) {
@@ -77,14 +85,16 @@ function createHarness(setup: Setup, texts: ReadonlyMap<string, string>) {
     return uploaded.get(key)!;
   };
 
-  const chat = () =>
+  const selector = new ContextSelector(store, embeddings, {
+    fullContextMaxTokens: setup.fullContextMaxTokens,
+    topK: setup.ragTopK,
+  });
+
+  const chat = (messages: InMemoryMessageRepository) =>
     new ChatService({
       documents: store,
-      messages: new InMemoryMessageRepository(),
-      selector: new ContextSelector(store, embeddings, {
-        fullContextMaxTokens: setup.fullContextMaxTokens,
-        topK: setup.ragTopK,
-      }),
+      messages,
+      selector,
       llm,
       prompts: createDefaultPromptRegistry(),
       usage: new UsageService(aiRequests, {
@@ -108,20 +118,55 @@ function createHarness(setup: Setup, texts: ReadonlyMap<string, string>) {
       },
     });
 
+  /** Where the passage with the answer ranks among what retrieval returns, asked of the selector directly. */
+  const retrievals = new Map<string, Promise<Retrieval | null>>();
+  const retrieve = (testCase: EvalCase): Promise<Retrieval | null> => {
+    const evidence = testCase.kind === 'unanswerable' ? undefined : testCase.evidence;
+    if (evidence === undefined) return Promise.resolve(null);
+    if (!retrievals.has(testCase.id)) {
+      retrievals.set(
+        testCase.id,
+        (async (): Promise<Retrieval> => {
+          const id = await documentId(testCase.document);
+          const document = await store.findById(userId, id);
+          if (!document) throw new Error(`Document ${testCase.document} disappeared`);
+          const { strategy, sources } = await selector.select({
+            document,
+            question: testCase.question,
+            previousQuestion: testCase.turns?.at(-1) ?? null,
+          });
+          if (strategy === 'full') return { strategy, rank: null };
+          const ranked = [...sources].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+          const index = ranked.findIndex((source) => hasWords(source.text, evidence));
+          return { strategy, rank: index === -1 ? null : index + 1 };
+        })(),
+      );
+    }
+    return retrievals.get(testCase.id)!;
+  };
+
   return {
     async ask(testCase: EvalCase, repeat: number): Promise<Run> {
       const started = performance.now();
       let ttftMs: number | null = null;
       let reply: MessageDto | null = null;
       let failure: string | null = null;
+      let retrieval: Retrieval | null = null;
       try {
-        const stream = chat().ask({
-          userId,
-          documentId: await documentId(testCase.document),
-          question: testCase.question,
-          requestId: randomUUID(),
-          instance: '/eval',
-        });
+        const id = await documentId(testCase.document);
+        retrieval = await retrieve(testCase);
+        const service = chat(new InMemoryMessageRepository());
+        const ask = (question: string) =>
+          service.ask({
+            userId,
+            documentId: id,
+            question,
+            requestId: randomUUID(),
+            instance: '/eval',
+          });
+        for (const turn of testCase.turns ?? []) await drain(ask(turn));
+
+        const stream = ask(testCase.question);
         for await (const event of stream) {
           if (event.type === 'delta') ttftMs ??= performance.now() - started;
           else if (event.type === 'final') reply = event.message;
@@ -141,6 +186,7 @@ function createHarness(setup: Setup, texts: ReadonlyMap<string, string>) {
           caseId: testCase.id,
           repeat,
           outcome: null,
+          retrieval,
           failure,
           ttftMs,
           latencyMs,
@@ -158,10 +204,12 @@ function createHarness(setup: Setup, texts: ReadonlyMap<string, string>) {
           status: answer.status,
           answer: answer.answer,
           confidence: answer.confidence,
-          citations: answer.citations,
+          citations: answer.citations.map(({ sourceId, quote }) => ({ sourceId, quote })),
+          followUps: answer.followUpQuestions,
           warnings: answer.warnings,
-          sourceTexts: answer.sources.map((source) => source.text),
+          sources: answer.sources.map(({ id, text }) => ({ id, text })),
         },
+        retrieval,
         failure,
         ttftMs,
         latencyMs: meta.latencyMs,

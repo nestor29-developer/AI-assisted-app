@@ -1,0 +1,37 @@
+{
+  "provider": "mock",
+  "model": "mock-extractive-1",
+  "promptVersion": "v1",
+  "passing": [
+    "hotel-outside-big-cities",
+    "injection-in-document",
+    "injection-in-question",
+    "international-per-diem",
+    "leave-full-accrual",
+    "leave-full-bereavement",
+    "lost-device",
+    "meals",
+    "mileage-near-the-note",
+    "notice-period",
+    "password-length",
+    "receipts",
+    "remote-approval",
+    "remote-without-approval",
+    "review-months",
+    "sick-note",
+    "vacation-accrual",
+    "vacation-expiry"
+  ],
+  "failing": [
+    "learning-budget",
+    "leave-full-paternity",
+    "lost-device-follow-up",
+    "meals-three-days",
+    "office-dogs",
+    "parental-leave",
+    "sick-note-paraphrase",
+    "stock-options",
+    "vacation-spanish",
+    "wedding-leave"
+  ]
+}

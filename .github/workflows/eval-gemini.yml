@@ -1,0 +1,49 @@
+name: eval-gemini
+
+# Needs a GEMINI_API_KEY repository secret, so it never runs on pull requests. Roughly 170 model calls.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Evaluate against the real model
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check that the key is configured
+        id: key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No GEMINI_API_KEY secret is set, so there is nothing to evaluate."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+        if: steps.key.outputs.present == 'true'
+      - name: Both prompt versions, three repeats each, so noise shows
+        if: steps.key.outputs.present == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: npm run eval -- --provider gemini --prompt v1,v2 --repeats 3 --seed 7
+      - name: Keep the report
+        if: always() && steps.key.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: evals/reports/
+          if-no-files-found: ignore
