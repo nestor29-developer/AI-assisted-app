@@ -1,0 +1,10 @@
+environment     = "prod"
+region          = "eu-west-1"
+app_origin      = "https://docqa.example.com"
+certificate_arn = "arn:aws:acm:eu-west-1:111111111111:certificate/00000000-0000-0000-0000-000000000000"
+
+# A git SHA. Repositories are immutable, so every release needs its own tag.
+image_tag = "0000000000000000000000000000000000000000"
+
+# First apply only: create everything except the service, then set secrets and run the migration.
+# deploy_service = false

@@ -44,7 +44,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# terraform
+# terraform: state, local values and plans stay out; the lock file and the .example files are tracked
 /infra/terraform/.terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
+/infra/terraform/*.tfvars
+/infra/terraform/backend.hcl

@@ -2,6 +2,10 @@
 FROM node:22-slim AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+# Amazon RDS certificates are not in Node's trust store. The checksum makes a changed bundle fail the build.
+ADD --checksum=sha256:fe45bbebf92ad3e27a583bbb2ddd1553c521ed4d49af5514dc0a40372ea5395c --chmod=0644 \
+    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /usr/local/share/rds-global-bundle.pem
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/rds-global-bundle.pem
 
 FROM base AS deps
 COPY package.json package-lock.json ./

@@ -82,6 +82,27 @@ jobs:
       # Production dependencies only: build tooling never ships.
       - run: npm audit --omit=dev --audit-level=high
 
+  terraform:
+    name: Terraform format, validate, test and scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TERRAFORM_IMAGE: hashicorp/terraform:1.16.4@sha256:985cdc6c1d9b0a65b83377f666efd2f740b47f02ac55be1ced3d18f7d3b0e829
+      TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+    steps:
+      - uses: actions/checkout@v4
+      - name: Format, validate and test (offline, the AWS provider is mocked)
+        run: |
+          terraform() {
+            docker run --rm -e TF_IN_AUTOMATION=1 -v "$PWD/infra/terraform:/work" -w /work "$TERRAFORM_IMAGE" "$@"
+          }
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate
+          terraform test
+      - name: Misconfiguration scan (high and critical findings fail the build)
+        run: docker run --rm -v "$PWD/infra/terraform:/src:ro" "$TRIVY_IMAGE" config /src --severity HIGH,CRITICAL --exit-code 1
+
   container:
     name: Container image and smoke test
     runs-on: ubuntu-latest
