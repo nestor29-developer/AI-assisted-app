@@ -1,10 +1,8 @@
-# syntax=docker/dockerfile:1
-FROM node:22-slim AS base
+FROM node:22-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-# Amazon RDS certificates are not in Node's trust store. The checksum makes a changed bundle fail the build.
-ADD --checksum=sha256:fe45bbebf92ad3e27a583bbb2ddd1553c521ed4d49af5514dc0a40372ea5395c --chmod=0644 \
-    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /usr/local/share/rds-global-bundle.pem
+# Amazon RDS certificates are not in Node's trust store; CI checks weekly that this copy is current.
+COPY docker/rds-global-bundle.pem /usr/local/share/rds-global-bundle.pem
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/rds-global-bundle.pem
 
 FROM base AS deps
@@ -23,7 +21,7 @@ COPY src ./src
 COPY scripts ./scripts
 COPY drizzle ./drizzle
 USER node
-CMD ["npx", "tsx", "--conditions=react-server", "scripts/migrate.ts"]
+CMD ["node_modules/.bin/tsx", "--conditions=react-server", "scripts/migrate.ts"]
 
 FROM base AS runner
 ARG APP_VERSION=dev

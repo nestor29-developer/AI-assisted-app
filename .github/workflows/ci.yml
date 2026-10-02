@@ -4,14 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1' # weekly, so new advisories and AWS changes show up even when nobody pushes
 
 permissions:
   contents: read
 
-# A newer push to the same branch makes the older run pointless.
+# A newer push to the same branch makes the older run pointless, except on main.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   NEXT_TELEMETRY_DISABLED: '1'
@@ -21,21 +24,25 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0 # scan the whole history, not just the tip
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # the whole history, not just the pushed range
+          persist-credentials: false
+      - name: Gitleaks over the full history
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$GITLEAKS_IMAGE" git --redact=100 --no-banner --exit-code 2 -v /repo
 
   verify:
     name: Lint, test, evaluate, build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://app:app@localhost:5432/docqa
     services:
       postgres:
-        image: pgvector/pgvector:pg17
+        image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
         env:
           POSTGRES_USER: app
           POSTGRES_PASSWORD: app
@@ -47,8 +54,10 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -63,8 +72,16 @@ jobs:
         run: npm test
       - name: Integration tests (real Postgres with pgvector)
         run: npm run test:integration
-      - name: Evaluation against the offline mock model
+      - name: Evaluation against the offline mock model (checks the plumbing, not answer quality)
         run: npm run eval
+      - name: Keep the evaluation report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: eval-report
+          path: evals/reports/*.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Production build
         run: npm run build
 
@@ -73,13 +90,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci --ignore-scripts
-      # Production dependencies only: build tooling never ships.
+          persist-credentials: false
+      # npm audit reads package-lock.json only, so nothing is installed. Production dependencies only: build tooling never ships.
       - run: npm audit --omit=dev --audit-level=high
 
   terraform:
@@ -90,7 +104,9 @@ jobs:
       TERRAFORM_IMAGE: hashicorp/terraform:1.16.4@sha256:985cdc6c1d9b0a65b83377f666efd2f740b47f02ac55be1ced3d18f7d3b0e829
       TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Format, validate and test (offline, the AWS provider is mocked)
         run: |
           terraform() {
@@ -101,25 +117,26 @@ jobs:
           terraform validate
           terraform test
       - name: Misconfiguration scan (high and critical findings fail the build)
-        run: docker run --rm -v "$PWD/infra/terraform:/src:ro" "$TRIVY_IMAGE" config /src --severity HIGH,CRITICAL --exit-code 1
+        run: docker run --rm -v "$PWD/infra/terraform:/src:ro" "$TRIVY_IMAGE" config /src --severity HIGH,CRITICAL --exit-code 1 --skip-check-update
 
   container:
     name: Container image and smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      APP_VERSION: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Build and start the stack from the production images
         run: |
           JWT_SECRET="$(openssl rand -base64 48)"
+          echo "::add-mask::$JWT_SECRET"
           export JWT_SECRET
-          docker compose --profile full up -d --build
-          for _ in $(seq 1 40); do
-            if curl -fsS http://localhost:3000/api/v1/health/ready >/dev/null; then exit 0; fi
-            sleep 3
-          done
-          docker compose --profile full logs
-          exit 1
+          # --wait fails at once when a container exits (bad config, failed migration) instead of polling
+          docker compose --profile full up -d --build --wait --wait-timeout 180
+          curl -fsS http://localhost:3000/api/v1/health/ready
       - name: Smoke test the API through the running container
         run: |
           bash scripts/smoke-auth.sh
@@ -130,3 +147,20 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose --profile full down -v
+
+  rds-bundle:
+    name: RDS CA bundle is current
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Compare with what AWS publishes
+        run: |
+          curl -fsS https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o "$RUNNER_TEMP/upstream.pem"
+          if ! cmp -s "$RUNNER_TEMP/upstream.pem" docker/rds-global-bundle.pem; then
+            echo "::error::AWS published a new RDS CA bundle. Replace docker/rds-global-bundle.pem with it, then rebuild and roll out the images."
+            exit 1
+          fi
