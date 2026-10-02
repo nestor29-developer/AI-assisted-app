@@ -17,9 +17,11 @@
     "setup": "node scripts/setup-env.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --conditions=react-server --env-file-if-exists=.env scripts/migrate.ts",
-    "test:integration": "vitest run --config vitest.integration.config.mts"
+    "test:integration": "vitest run --config vitest.integration.config.mts",
+    "smoke:gemini": "tsx --conditions=react-server --env-file-if-exists=.env scripts/smoke-gemini.ts"
   },
   "dependencies": {
+    "@google/genai": "^2.26.0",
     "@node-rs/argon2": "^2.2.1",
     "cookie": "^2.0.1",
     "drizzle-orm": "^0.45.3",
