@@ -87,13 +87,18 @@ resource "aws_db_instance" "main" {
   copy_tags_to_snapshot     = true
   deletion_protection       = var.deletion_protection
   skip_final_snapshot       = false
-  final_snapshot_identifier = "${local.prefix}-final"
+  final_snapshot_identifier = "${local.prefix}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 
   auto_minor_version_upgrade            = true
   performance_insights_enabled          = true
   performance_insights_kms_key_id       = aws_kms_key.main.arn
   performance_insights_retention_period = 7
   enabled_cloudwatch_logs_exports       = ["postgresql", "upgrade"]
+
+  # Stamped when the database is created: a fixed name would collide the second time a stack of this name is torn down.
+  lifecycle {
+    ignore_changes = [final_snapshot_identifier]
+  }
 
   depends_on = [aws_cloudwatch_log_group.database]
 }

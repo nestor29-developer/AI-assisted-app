@@ -4,11 +4,13 @@ locals {
 
   # Cloud-side check of Fargate's allowed CPU and memory pairs, so a typo fails at plan time.
   fargate_memory = {
-    "256"  = [512, 1024, 2048]
-    "512"  = range(1024, 4097, 1024)
-    "1024" = range(2048, 8193, 1024)
-    "2048" = range(4096, 16385, 1024)
-    "4096" = range(8192, 30721, 1024)
+    "256"   = [512, 1024, 2048]
+    "512"   = range(1024, 4097, 1024)
+    "1024"  = range(2048, 8193, 1024)
+    "2048"  = range(4096, 16385, 1024)
+    "4096"  = range(8192, 30721, 1024)
+    "8192"  = range(16384, 61441, 4096)
+    "16384" = range(32768, 122881, 8192)
   }
 
   # Read-only root filesystem, no capabilities, a real init process, and one writable scratch volume.
@@ -30,11 +32,14 @@ locals {
     { name = "HOME", value = "/tmp" },
   ]
 
+  # Non-blocking, so a slow or unreachable log service drops lines from a 25 MiB buffer instead of stalling the app.
   log_options = {
-    for name in keys(local.tasks) : name => {
+    for name in keys(local.task_repository) : name => {
       awslogs-group         = aws_cloudwatch_log_group.task[name].name
       awslogs-region        = var.region
       awslogs-stream-prefix = name
+      mode                  = "non-blocking"
+      max-buffer-size       = "25m"
     }
   }
 
@@ -44,6 +49,14 @@ locals {
   }
 }
 
+# Container Insights would create this group itself and keep it for ever, so it is made first, with retention.
+resource "aws_cloudwatch_log_group" "insights" {
+  count = var.container_insights ? 1 : 0
+
+  name              = "/aws/ecs/containerinsights/${local.prefix}/performance"
+  retention_in_days = var.log_retention_days
+}
+
 resource "aws_ecs_cluster" "main" {
   name = local.prefix
 
@@ -51,6 +64,8 @@ resource "aws_ecs_cluster" "main" {
     name  = "containerInsights"
     value = var.container_insights ? "enabled" : "disabled"
   }
+
+  depends_on = [aws_cloudwatch_log_group.insights]
 }
 
 resource "aws_ecs_task_definition" "app" {
@@ -74,6 +89,7 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode([
     merge(local.container_hardening, {
       name         = "app"
+      user         = "1001"
       image        = "${aws_ecr_repository.this["app"].repository_url}:${var.image_tag}"
       stopTimeout  = 120
       portMappings = [{ containerPort = 3000, protocol = "tcp" }]
@@ -81,6 +97,7 @@ resource "aws_ecs_task_definition" "app" {
       environment = concat(local.database_environment, [
         { name = "PGUSER", value = var.app_db_user },
         { name = "APP_ORIGIN", value = var.app_origin },
+        { name = "HOSTNAME", value = "0.0.0.0" },
         { name = "TRUSTED_PROXY_HOPS", value = "1" },
         { name = "LLM_PROVIDER", value = "gemini" },
         { name = "LLM_MODEL", value = var.llm_model },
@@ -139,6 +156,7 @@ resource "aws_ecs_task_definition" "migrate" {
   container_definitions = jsonencode([
     merge(local.container_hardening, {
       name  = "migrate"
+      user  = "1000"
       image = "${aws_ecr_repository.this["migrator"].repository_url}:${local.migrator_tag}"
 
       environment = concat(local.database_environment, [
@@ -156,7 +174,7 @@ resource "aws_ecs_task_definition" "migrate" {
   ])
 }
 
-# Daily retention purge. It connects as the app's login, never as the master user.
+# Daily retention purge, from the same release as the app. It connects as the app's login, never as the master user.
 resource "aws_ecs_task_definition" "purge" {
   family                   = "${local.prefix}-purge"
   requires_compatibilities = ["FARGATE"]
@@ -178,7 +196,8 @@ resource "aws_ecs_task_definition" "purge" {
   container_definitions = jsonencode([
     merge(local.container_hardening, {
       name    = "purge"
-      image   = "${aws_ecr_repository.this["migrator"].repository_url}:${local.migrator_tag}"
+      user    = "1000"
+      image   = "${aws_ecr_repository.this["migrator"].repository_url}:${var.image_tag}"
       command = ["node", "--enable-source-maps", "dist/tasks/purge-expired.cjs"]
 
       environment = concat(local.database_environment, [
@@ -234,5 +253,5 @@ resource "aws_ecs_service" "app" {
     ignore_changes = [desired_count]
   }
 
-  depends_on = [aws_lb_listener.https]
+  depends_on = [aws_lb_listener.https, aws_iam_role_policy.execution]
 }

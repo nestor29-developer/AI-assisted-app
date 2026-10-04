@@ -146,6 +146,11 @@ variable "db_pool_max" {
   description = "Connections one app task may open. max_count x 2 (rolling deploys) x this must stay well under the database's max_connections."
   type        = number
   default     = 5
+
+  validation {
+    condition     = var.db_pool_max >= 1 && var.db_pool_max <= 100
+    error_message = "Use 1 to 100 connections per task (the application accepts no more than 100)."
+  }
 }
 
 variable "container_insights" {
@@ -179,9 +184,14 @@ variable "db_multi_az" {
 }
 
 variable "db_backup_retention_days" {
-  description = "How long automated backups are kept."
+  description = "How long automated backups are kept; they are what point-in-time restore is made from."
   type        = number
   default     = 7
+
+  validation {
+    condition     = var.db_backup_retention_days >= 1 && var.db_backup_retention_days <= 35
+    error_message = "Use 1 to 35 days: 0 would turn automated backups off, and RDS keeps at most 35."
+  }
 }
 
 variable "deletion_protection" {

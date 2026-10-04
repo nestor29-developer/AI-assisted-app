@@ -117,12 +117,19 @@ data "aws_iam_policy_document" "flow_assume" {
       variable = "aws:SourceAccount"
       values   = [local.account_id]
     }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:${local.partition}:ec2:${var.region}:${local.account_id}:vpc-flow-log/*"]
+    }
   }
 }
 
+# The documented set for publishing to CloudWatch Logs, without creating groups: the group is made above.
 data "aws_iam_policy_document" "flow_write" {
   statement {
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:DescribeLogGroups"]
     resources = ["${aws_cloudwatch_log_group.flow.arn}:*"]
   }
 }
@@ -136,6 +143,13 @@ resource "aws_iam_role_policy" "flow" {
   name   = "write-flow-logs"
   role   = aws_iam_role.flow.id
   policy = data.aws_iam_policy_document.flow_write.json
+
+  lifecycle {
+    precondition {
+      condition     = length(local.policy_findings["flow"]) == 0
+      error_message = "The flow log policy is too broad: ${join("; ", local.policy_findings["flow"])}."
+    }
+  }
 }
 
 resource "aws_flow_log" "main" {
@@ -143,4 +157,6 @@ resource "aws_flow_log" "main" {
   traffic_type    = "REJECT"
   log_destination = aws_cloudwatch_log_group.flow.arn
   iam_role_arn    = aws_iam_role.flow.arn
+
+  depends_on = [aws_iam_role_policy.flow]
 }

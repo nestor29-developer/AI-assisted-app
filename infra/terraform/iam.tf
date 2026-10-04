@@ -1,25 +1,42 @@
 locals {
-  # One execution role per task, each limited to the image and secrets that task needs.
-  tasks = {
-    app = {
-      repository = "app"
-      secrets = [
-        aws_secretsmanager_secret.jwt.arn,
-        aws_secretsmanager_secret.gemini.arn,
-        aws_secretsmanager_secret.app_db.arn,
-      ]
-    }
-    migrate = {
-      repository = "migrator"
-      secrets = [
-        aws_db_instance.main.master_user_secret[0].secret_arn,
-        aws_secretsmanager_secret.app_db.arn,
-      ]
-    }
-    purge = {
-      repository = "migrator"
-      secrets    = [aws_secretsmanager_secret.app_db.arn]
-    }
+  # One execution role per task: its image comes from this repository, and it may read only its own secrets.
+  task_repository = {
+    app     = "app"
+    migrate = "migrator"
+    purge   = "migrator"
+  }
+
+  task_secrets = {
+    app = [
+      aws_secretsmanager_secret.jwt.arn,
+      aws_secretsmanager_secret.gemini.arn,
+      aws_secretsmanager_secret.app_db.arn,
+    ]
+    migrate = [
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+      aws_secretsmanager_secret.app_db.arn,
+    ]
+    purge = [aws_secretsmanager_secret.app_db.arn]
+  }
+
+  policy_documents = merge(
+    { for task, document in data.aws_iam_policy_document.execution : "execution-${task}" => document.json },
+    {
+      scheduler = data.aws_iam_policy_document.scheduler_run.json
+      flow      = data.aws_iam_policy_document.flow_write.json
+    },
+  )
+
+  # No role policy may grow a wildcard action or name every resource (ECR login has no resource-level form).
+  policy_findings = {
+    for key, json in local.policy_documents : key => flatten([
+      for statement in jsondecode(json).Statement : [
+        for finding in concat(
+          [for action in tolist(try(tolist(statement.Action), [statement.Action])) : "${try(statement.Sid, "a statement")} allows ${action}" if endswith(action, "*")],
+          [for resource in tolist(try(tolist(statement.Resource), [statement.Resource])) : "${try(statement.Sid, "a statement")} applies to every resource" if resource == "*" && try(statement.Sid, "") != "EcrLogin"],
+        ) : finding
+      ] if try(statement.Effect, "Allow") == "Allow"
+    ])
   }
 }
 
@@ -42,13 +59,13 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
     condition {
       test     = "ArnLike"
       variable = "aws:SourceArn"
-      values   = ["arn:aws:ecs:${var.region}:${local.account_id}:*"]
+      values   = ["arn:${local.partition}:ecs:${var.region}:${local.account_id}:*"]
     }
   }
 }
 
 data "aws_iam_policy_document" "execution" {
-  for_each = local.tasks
+  for_each = local.task_repository
 
   statement {
     sid       = "EcrLogin"
@@ -63,7 +80,7 @@ data "aws_iam_policy_document" "execution" {
       "ecr:BatchGetImage",
       "ecr:GetDownloadUrlForLayer",
     ]
-    resources = [aws_ecr_repository.this[each.value.repository].arn]
+    resources = [aws_ecr_repository.this[each.value].arn]
   }
 
   statement {
@@ -75,7 +92,7 @@ data "aws_iam_policy_document" "execution" {
   statement {
     sid       = "ReadOwnSecrets"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = each.value.secrets
+    resources = local.task_secrets[each.key]
   }
 
   statement {
@@ -92,20 +109,28 @@ data "aws_iam_policy_document" "execution" {
 }
 
 resource "aws_iam_role" "execution" {
-  for_each = local.tasks
+  for_each = local.task_repository
 
   name               = "${local.prefix}-${each.key}-execution"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
 
 resource "aws_iam_role_policy" "execution" {
-  for_each = local.tasks
+  for_each = local.task_repository
 
   name   = "execution"
   role   = aws_iam_role.execution[each.key].id
   policy = data.aws_iam_policy_document.execution[each.key].json
+
+  lifecycle {
+    precondition {
+      condition     = length(local.policy_findings["execution-${each.key}"]) == 0
+      error_message = "The ${each.key} execution policy is too broad: ${join("; ", local.policy_findings["execution-${each.key}"])}."
+    }
+  }
 }
 
+# Only this schedule, in this account, may ask the scheduler to assume the role.
 data "aws_iam_policy_document" "scheduler_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -119,6 +144,12 @@ data "aws_iam_policy_document" "scheduler_assume" {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
       values   = [local.account_id]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:${local.partition}:scheduler:${var.region}:${local.account_id}:schedule-group/default"]
     }
   }
 }
@@ -161,4 +192,11 @@ resource "aws_iam_role_policy" "scheduler" {
   name   = "run-purge-task"
   role   = aws_iam_role.scheduler.id
   policy = data.aws_iam_policy_document.scheduler_run.json
+
+  lifecycle {
+    precondition {
+      condition     = length(local.policy_findings["scheduler"]) == 0
+      error_message = "The scheduler policy is too broad: ${join("; ", local.policy_findings["scheduler"])}."
+    }
+  }
 }

@@ -51,7 +51,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
   }
 }
 
-# The regional ELB account exists for the original regions; newer regions need the log-delivery service principal.
+# Regions from before 2022 deliver as a regional ELB account, newer ones as a service principal; both may write.
 data "aws_elb_service_account" "main" {}
 
 data "aws_iam_policy_document" "alb_logs" {
@@ -63,6 +63,17 @@ data "aws_iam_policy_document" "alb_logs" {
     principals {
       type        = "AWS"
       identifiers = [data.aws_elb_service_account.main.arn]
+    }
+  }
+
+  statement {
+    sid       = "LoadBalancerServiceWritesLogs"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.alb_logs.arn}/alb/AWSLogs/${local.account_id}/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["logdelivery.elasticloadbalancing.amazonaws.com"]
     }
   }
 
@@ -110,7 +121,7 @@ resource "aws_lb" "main" {
     enabled = true
   }
 
-  depends_on = [aws_s3_bucket_policy.alb_logs]
+  depends_on = [aws_s3_bucket_policy.alb_logs, aws_internet_gateway.main]
 }
 
 # Least outstanding requests spreads long-lived streams by what each task is doing, not by turns.

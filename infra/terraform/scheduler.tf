@@ -4,6 +4,7 @@ resource "aws_scheduler_schedule" "purge" {
   description                  = "Retention purge: expired documents, old audit rows and spent rate-limit counters"
   schedule_expression          = var.purge_schedule
   schedule_expression_timezone = "UTC"
+  state                        = var.deploy_service ? "ENABLED" : "DISABLED"
 
   flexible_time_window {
     mode = "OFF"
@@ -31,4 +32,6 @@ resource "aws_scheduler_schedule" "purge" {
       maximum_event_age_in_seconds = 3600
     }
   }
+
+  depends_on = [aws_iam_role_policy.scheduler]
 }
