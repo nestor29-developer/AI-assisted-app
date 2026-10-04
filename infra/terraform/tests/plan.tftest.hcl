@@ -207,6 +207,11 @@ run "tasks_are_locked_down_and_hold_no_secret_values" {
   }
 
   assert {
+    condition     = contains([for entry in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : "${entry.name}=${entry.value}"], "QA_PROMPT_VERSION=v1")
+    error_message = "The prompt version must reach the app, or rolling a prompt change back would mean editing the task definition."
+  }
+
+  assert {
     condition = alltrue([
       for task in [aws_ecs_task_definition.app, aws_ecs_task_definition.migrate, aws_ecs_task_definition.purge] :
       jsondecode(task.container_definitions)[0].logConfiguration.options.mode == "non-blocking"
@@ -277,6 +282,19 @@ run "the_migrator_tag_can_lead_the_app_tag" {
   assert {
     condition     = endswith(jsondecode(aws_ecs_task_definition.purge.container_definitions)[0].image, ":0123abc")
     error_message = "The purge belongs to the release that is running, so it follows the app's tag, not the migration's."
+  }
+}
+
+run "the_prompt_version_can_be_rolled_back_with_one_variable" {
+  command = plan
+
+  variables {
+    qa_prompt_version = "v2"
+  }
+
+  assert {
+    condition     = contains([for entry in jsondecode(aws_ecs_task_definition.app.container_definitions)[0].environment : "${entry.name}=${entry.value}"], "QA_PROMPT_VERSION=v2")
+    error_message = "The app should run the prompt version it was told to."
   }
 }
 
@@ -521,4 +539,14 @@ run "lets_ecr_login_name_every_resource_and_ignores_what_a_policy_denies" {
     condition     = length(aws_ecs_task_definition.app.family) > 0
     error_message = "A policy whose only broad statements are the ECR login and a deny should pass the guard."
   }
+}
+
+run "refuses_a_prompt_version_that_is_not_a_version" {
+  command = plan
+
+  variables {
+    qa_prompt_version = "latest"
+  }
+
+  expect_failures = [var.qa_prompt_version]
 }

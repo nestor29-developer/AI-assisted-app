@@ -101,6 +101,7 @@ resource "aws_ecs_task_definition" "app" {
         { name = "TRUSTED_PROXY_HOPS", value = "1" },
         { name = "LLM_PROVIDER", value = "gemini" },
         { name = "LLM_MODEL", value = var.llm_model },
+        { name = "QA_PROMPT_VERSION", value = var.qa_prompt_version },
         { name = "LLM_TIMEOUT_MS", value = tostring(local.llm_timeout_ms) },
         { name = "DB_POOL_MAX", value = tostring(var.db_pool_max) },
         { name = "DAILY_TOKEN_BUDGET", value = tostring(var.daily_token_budget) },

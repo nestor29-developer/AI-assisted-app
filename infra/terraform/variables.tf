@@ -217,6 +217,17 @@ variable "llm_model" {
   default     = "gemini-3.8-flash"
 }
 
+variable "qa_prompt_version" {
+  description = "Which version of the question-answering prompt the app uses. Rolling a prompt change back is this one value."
+  type        = string
+  default     = "v1"
+
+  validation {
+    condition     = can(regex("^v[0-9]+$", var.qa_prompt_version))
+    error_message = "Use a prompt version such as v1 or v2."
+  }
+}
+
 variable "daily_token_budget" {
   description = "Tokens one user may spend in 24 hours."
   type        = number
