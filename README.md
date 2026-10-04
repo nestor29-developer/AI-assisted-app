@@ -8,6 +8,16 @@ Built for the Full Stack AI Engineer assessment: Next.js and TypeScript, Postgre
 
 > **Honest status.** No Gemini API key was available where this was built. The Gemini adapters are verified against the SDK's types and with stubbed clients, and everything else runs against a deterministic mock model. Two commands measure what that leaves open (answer quality, real token counts, latency); they are in [Using the real model](#using-the-real-model-gemini). The evaluation in CI proves the plumbing around the model, not the quality of its answers.
 
+## Screenshots
+
+Taken from the production build on the offline mock model, so the answer text is the mock's, not Gemini's.
+
+![The documents page with the sample document filled in and one document listed](docs/images/documents.png)
+
+![An answer with its verified quote, and the source excerpt with that quote highlighted](docs/images/answer.png)
+
+<img src="docs/images/phone.png" alt="The same answer on a phone-sized screen" width="320">
+
 ## Run it locally
 
 Prerequisites: Node 22 (`.nvmrc`) and Docker with Compose v2. No API key is needed.
@@ -30,10 +40,10 @@ Every setting is an environment variable, checked at boot by [`env.ts`](src/serv
 **Try it.**
 
 1. Open http://localhost:3000 and create an account.
-2. Add a document: paste text, or upload [`evals/fixtures/handbook.md`](evals/fixtures/handbook.md) (a fictional 13 KB handbook, big enough to need retrieval) or [`scripts/fixtures/sample-policy.pdf`](scripts/fixtures/sample-policy.pdf) (three pages, so citations show page numbers).
-3. Ask "How many vacation days do I earn per month?" and open the `[S1]` marker. Then ask something unrelated ("What is the capital of France?") and see the "not found" state.
+2. Add a document. The quickest way is **Use a sample document** and then **Add document** (a short, invented handbook). Or paste text, or upload [`evals/fixtures/handbook.md`](evals/fixtures/handbook.md) (a fictional 13 KB handbook, big enough to need retrieval) or [`scripts/fixtures/sample-policy.pdf`](scripts/fixtures/sample-policy.pdf) (three pages, so citations show page numbers).
+3. Click a starter question, or ask "How many vacation days do I earn per month?", and open a source marker (`S1`) in the answer to see the quote it came from. Then ask something unrelated ("What is the capital of France?") and see the "not found" state.
 
-The mock model is extractive: it answers with the best-matching sentence, so its quotes really verify, but it cannot paraphrase or reason. It also answers an off-topic question with an unrelated sentence whenever a single word overlaps (try "Who founded the company?"), and the badge then still says the quote was verified. That is why "verified" is worded narrowly: the quote exists in the text, which is not the same as the answer being true. A real model is expected to decline such questions, and the `not_found` cases of `npm run eval -- --provider gemini` measure that. To watch the stages and the Stop button, slow the mock down with `MOCK_LLM_CHUNK_DELAY_MS=300` in `.env`.
+The mock model is extractive: it answers with the best-matching sentence, so its quotes really verify, but it cannot paraphrase or reason. A request for the gist ("summarize", "key points", "what is this about") is answered from the opening sentences of the document. It also answers an off-topic question with an unrelated sentence whenever a single word overlaps (try "Who founded the company?"), and the badge then still says the quote was verified. That is why "verified" is worded narrowly: the quote exists in the text, which is not the same as the answer being true. A real model is expected to decline such questions, and the `not_found` cases of `npm run eval -- --provider gemini` measure that. The mock streams slowly on purpose (40 ms a chunk) so the stages and the Stop button can be seen; `MOCK_LLM_CHUNK_DELAY_MS=0` makes it instant and `300` gives more time to press Stop.
 
 ### Using the real model (Gemini)
 
@@ -91,7 +101,7 @@ flowchart LR
   secrets[Secrets Manager] -.->|injected at task start| app
 ```
 
-[`infra/terraform`](infra/terraform) builds a VPC with private subnets, an ALB (HTTPS only, access logs), an ECS Fargate service with a rollback-on-failure circuit breaker and autoscaling, RDS PostgreSQL 17 (private, Multi-AZ, encrypted, TLS enforced), ECR with immutable tags, Secrets Manager containers, per-task IAM roles and an EventBridge-scheduled purge. Migrations run as their own task before each rollout, never at app start. In CI the module is formatted, validated, tested with a mocked AWS provider (the tests were mutation-checked), and scanned. It is never applied.
+[`infra/terraform`](infra/terraform) builds a VPC with private subnets, an ALB (HTTPS at the edge, access logs), an ECS Fargate service with a rollback-on-failure circuit breaker and autoscaling, RDS PostgreSQL 17 (private, Multi-AZ, encrypted, TLS enforced), ECR with immutable tags, Secrets Manager containers, per-task IAM roles and an EventBridge-scheduled purge. Migrations run as their own task before each rollout, never at app start. In CI the module is formatted, validated, tested with a mocked AWS provider (the tests were mutation-checked), and scanned. It is never applied.
 
 ### Inside the app
 
@@ -261,6 +271,7 @@ Layered, because no single filter prevents prompt injection:
 - **Ingestion is synchronous and in-process,** bounded by caps; a queue and worker are the fix.
 - **Sessions cannot be revoked before they expire,** and there are no refresh tokens, email verification, password reset or account deletion.
 - **The Content Security Policy is not strict** (no script restrictions).
+- **There are no automated browser tests.** The component tests run in jsdom, which loads no stylesheet, so a CSS-level regression is caught only by looking. Checking by hand in a real browser found one (secondary buttons had lost their border) and a test now guards that class of bug.
 - **One region, one database writer,** with backups and Multi-AZ but no disaster-recovery plan.
 
 ### What was left out
