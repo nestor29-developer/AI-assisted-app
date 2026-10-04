@@ -4,6 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { MessageDto } from '@/shared/contracts/messages';
 import { json, problem, stubApi } from '@/test/helpers/api';
+import {
+  ask as askQuestion,
+  chatRoutes,
+  composer,
+  pressStop,
+  type User,
+} from '@/test/helpers/chat';
 import { renderWithClient } from '@/test/helpers/render';
 import { controlledSse, sseResponse } from '@/test/helpers/sse';
 import {
@@ -21,21 +28,9 @@ const ASK = `POST ${DOC}/messages`;
 const THREAD = `GET ${DOC}/messages`;
 const QUESTION = 'How many vacation days do I get?';
 
-const baseRoutes = (messages: MessageDto[] = []) => ({
-  [`GET ${DOC}`]: () => json({ document }),
-  [THREAD]: () => json({ messages }),
-});
+const baseRoutes = (messages: MessageDto[] = []) => chatRoutes(document, messages);
 
-const composer = async () => {
-  const box = await screen.findByRole('textbox', { name: 'Your question' });
-  await waitFor(() => expect(box).toBeEnabled());
-  return box;
-};
-
-const ask = async (user: ReturnType<typeof userEvent.setup>, question = QUESTION) => {
-  await user.type(await composer(), question);
-  await user.keyboard('{Enter}');
-};
+const ask = (user: User, question = QUESTION) => askQuestion(user, question);
 
 describe('ChatView: asking a question', () => {
   it('shows each stage of the answer as it happens, then a checked answer', async () => {
@@ -77,8 +72,8 @@ describe('ChatView: asking a question', () => {
     stream.push({ type: 'final', message: reply });
     stream.end();
 
-    const answer = await screen.findByRole('article', { name: 'Answer' });
-    expect(within(answer).getByText('Grounded in the document')).toBeInTheDocument();
+    const answer = await screen.findByRole('article', { name: /^Answer/ });
+    expect(within(answer).getByText('Quotes verified')).toBeInTheDocument();
     expect(within(answer).getByText('Quote found in the document')).toBeInTheDocument();
     expect(screen.getAllByText(QUESTION)).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
@@ -104,7 +99,7 @@ describe('ChatView: asking a question', () => {
     expect(await screen.findByText('Ask your first question')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'What are the key dates or deadlines?' }));
 
-    expect(await screen.findByRole('article', { name: 'Answer' })).toBeInTheDocument();
+    expect(await screen.findByRole('article', { name: /^Answer/ })).toBeInTheDocument();
     expect(api.callsTo(ASK)[0]?.body).toEqual({ question: 'What are the key dates or deadlines?' });
     expect(screen.queryByText('Ask your first question')).not.toBeInTheDocument();
   });
@@ -165,7 +160,7 @@ describe('ChatView: when something goes wrong', () => {
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
 
-    expect(await screen.findByRole('article', { name: 'Answer' })).toBeInTheDocument();
+    expect(await screen.findByRole('article', { name: /^Answer/ })).toBeInTheDocument();
     expect(api.callsTo(ASK)).toHaveLength(2);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -219,7 +214,9 @@ describe('ChatView: when something goes wrong', () => {
 
     expect(await screen.findByText('Could not get an answer')).toBeInTheDocument();
     expect(screen.getByText(/not responding right now/)).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('Could not get an answer.'),
+    );
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(api.callsTo(ASK)).toHaveLength(2));
@@ -252,7 +249,7 @@ describe('ChatView: when something goes wrong', () => {
     stream.push({ type: 'delta', text: 'Employees accrue' });
     await screen.findByText(/Employees accrue/);
 
-    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    await pressStop(user);
 
     expect(await screen.findByText('You stopped this answer')).toBeInTheDocument();
     expect(screen.getByText('Employees accrue')).toBeInTheDocument();
@@ -295,7 +292,7 @@ describe('ChatView: when something goes wrong', () => {
       stream!.push({ type: 'accepted', userMessage });
       stream!.push({ type: 'delta', text: 'Employees accrue' });
       await screen.findByText(/Employees accrue/);
-      await user.click(screen.getByRole('button', { name: 'Stop' }));
+      await pressStop(user);
     };
 
     it('shows the stop at once, then swaps in the saved reply when it appears', async () => {
@@ -403,13 +400,13 @@ describe('ChatView: a stored conversation', () => {
 
     expect(await screen.findByRole('heading', { name: 'Employee handbook' })).toBeInTheDocument();
     expect(screen.getByText(QUESTION)).toBeInTheDocument();
-    const answer = await screen.findByRole('article', { name: 'Answer' });
-    expect(
-      within(answer).getByText(/gemini-3.8-flash · prompt v1 · 1,200 in \/ 80 out tokens · 1.5 s/),
-    ).toBeInTheDocument();
+    const answer = await screen.findByRole('article', { name: /^Answer/ });
+    for (const datum of ['gemini-3.8-flash', 'prompt v1', '1,200 in / 80 out tokens', '1.5 s']) {
+      expect(within(answer).getByText(datum)).toHaveClass('whitespace-nowrap');
+    }
     expect(within(answer).getByText('Page 2')).toBeInTheDocument();
 
-    const details = within(answer).getByText('Source excerpt').closest('details')!;
+    const details = within(answer).getByText('Source excerpt S1').closest('details')!;
     expect(details).not.toHaveAttribute('open');
     await user.click(within(answer).getByRole('button', { name: 'Show source S1' }));
 
@@ -435,9 +432,9 @@ describe('ChatView: a stored conversation', () => {
 
     renderWithClient(<ChatView documentId={document.id} />);
 
-    const answer = await screen.findByRole('article', { name: 'Answer' });
+    const answer = await screen.findByRole('article', { name: /^Answer/ });
     expect(within(answer).getByText('Unverified, double-check')).toBeInTheDocument();
-    expect(within(answer).getByText('Quote not found in the document')).toBeInTheDocument();
+    expect(within(answer).getByText('Quote not found in the cited excerpt')).toBeInTheDocument();
     expect(
       within(answer).getByText('At least one quote could not be found in its source.'),
     ).toBeInTheDocument();
@@ -447,7 +444,7 @@ describe('ChatView: a stored conversation', () => {
   });
 
   it.each([
-    ['not_found', 'none', 'Not found in the document'],
+    ['not_found', 'none', 'No answer found'],
     ['declined', 'none', 'Declined'],
     ['unreadable', 'none', 'Reply could not be read'],
     ['partially_answered', 'medium', 'Partial answer'],
@@ -493,7 +490,7 @@ describe('ChatView: a stored conversation', () => {
     });
 
     renderWithClient(<ChatView documentId={document.id} />);
-    await screen.findByRole('article', { name: 'Answer' });
+    await screen.findByRole('article', { name: /^Answer/ });
 
     await user.click(screen.getByRole('button', { name: 'Edit question' }));
     const box = screen.getByRole('textbox', { name: 'Your question' });

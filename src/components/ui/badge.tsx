@@ -11,13 +11,17 @@ export type BadgeTone = keyof typeof TONES;
 
 export function Badge({
   tone = 'neutral',
+  title,
   children,
 }: {
   readonly tone?: BadgeTone;
+  /** What the badge means, for people who hover it. */
+  readonly title?: string;
   readonly children: ReactNode;
 }) {
   return (
     <span
+      title={title}
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${TONES[tone]}`}
     >
       {children}

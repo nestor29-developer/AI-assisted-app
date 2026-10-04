@@ -1,28 +1,69 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { LiveStatus, useAnnouncer } from '@/components/ui/live-status';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDeleteDocument, useDocuments } from '@/hooks/use-documents';
 import { describeError } from '@/lib/api-errors';
 import { describeKind, formatBytes, formatExpiry } from '@/lib/format';
 import type { DocumentSummary } from '@/shared/contracts/documents';
 
-function DocumentRow({ document }: { readonly document: DocumentSummary }) {
+function DocumentRow({
+  document,
+  onRemoved,
+}: {
+  readonly document: DocumentSummary;
+  /** Told when the delete went through; `focusLost` says nobody has moved focus elsewhere since. */
+  readonly onRemoved: (title: string, focusLost: boolean) => void;
+}) {
   const remove = useDeleteDocument();
   const [confirming, setConfirming] = useState(false);
+  const rowRef = useRef<HTMLLIElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+
+  // The safe choice is focused first, and closing the question hands focus back to the button that opened it.
+  useEffect(() => {
+    if (confirming) {
+      cancelRef.current?.focus();
+    } else if (restoreFocus.current) {
+      restoreFocus.current = false;
+      deleteRef.current?.focus();
+    }
+  }, [confirming]);
+
+  function closeConfirmation() {
+    restoreFocus.current = true;
+    setConfirming(false);
+  }
+
+  async function confirmDelete() {
+    try {
+      await remove.mutateAsync(document.id);
+    } catch {
+      closeConfirmation();
+      return;
+    }
+    // By now the row is usually gone and focus with it; if the person moved on, leave them there.
+    const active = window.document.activeElement;
+    const focusLost =
+      !active || active === window.document.body || Boolean(rowRef.current?.contains(active));
+    onRemoved(document.title, focusLost);
+  }
 
   return (
-    <li className="space-y-2 p-4">
+    <li ref={rowRef} className="space-y-2 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-1">
           <Link
             href={`/documents/${document.id}`}
-            className="block truncate text-sm font-medium text-indigo-700 hover:underline"
+            className="line-clamp-2 text-sm font-medium wrap-break-word text-indigo-700 hover:underline"
           >
             {document.title}
           </Link>
@@ -34,6 +75,7 @@ function DocumentRow({ document }: { readonly document: DocumentSummary }) {
         </div>
         {confirming ? null : (
           <Button
+            ref={deleteRef}
             variant="secondary"
             size="sm"
             onClick={() => setConfirming(true)}
@@ -50,15 +92,16 @@ function DocumentRow({ document }: { readonly document: DocumentSummary }) {
             variant="danger"
             size="sm"
             loading={remove.isPending}
-            onClick={() => remove.mutate(document.id, { onError: () => setConfirming(false) })}
+            onClick={() => void confirmDelete()}
           >
             Yes, delete
           </Button>
           <Button
+            ref={cancelRef}
             variant="secondary"
             size="sm"
             disabled={remove.isPending}
-            onClick={() => setConfirming(false)}
+            onClick={closeConfirmation}
           >
             Cancel
           </Button>
@@ -85,10 +128,23 @@ function ListSkeleton() {
 
 export function DocumentList() {
   const documents = useDocuments();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const { message, announce } = useAnnouncer();
+
+  function onRemoved(title: string, focusLost: boolean) {
+    announce(`${title} was deleted.`);
+    if (focusLost) heading.current?.focus();
+  }
 
   return (
     <section aria-labelledby="documents-heading" className="space-y-3">
-      <h2 id="documents-heading" className="text-base font-semibold text-slate-900">
+      <LiveStatus message={message} />
+      <h2
+        ref={heading}
+        id="documents-heading"
+        tabIndex={-1}
+        className="rounded-sm text-base font-semibold text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-indigo-600"
+      >
         Your documents
       </h2>
       {documents.isPending ? <ListSkeleton /> : null}
@@ -109,7 +165,7 @@ export function DocumentList() {
       {documents.isSuccess && documents.data.length > 0 ? (
         <ul className="divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white">
           {documents.data.map((document) => (
-            <DocumentRow key={document.id} document={document} />
+            <DocumentRow key={document.id} document={document} onRemoved={onRemoved} />
           ))}
         </ul>
       ) : null}

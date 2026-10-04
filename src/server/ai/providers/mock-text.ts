@@ -13,12 +13,16 @@ export function significantTokens(text: string): string[] {
     .map((token) => (token.length > 3 && token.endsWith('s') ? token.slice(0, -1) : token));
 }
 
+/** A blank line ends a block; a single line break inside one is only where a PDF wrapped the line. */
 export function splitSentences(text: string): string[] {
-  return (
-    text
-      // Latin marks need trailing whitespace (so "1.5" stays whole); CJK full stops do not.
-      .split(/(?<=[.!?])\s+|(?<=[。！？])\s*|\n+/u)
-      .map((sentence) => sentence.trim())
-      .filter((sentence) => sentence.length > 0)
-  );
+  return text
+    .split(/\n\s*\n/)
+    .flatMap((block) =>
+      block
+        .replace(/\s*\n\s*/g, ' ')
+        // Latin marks need trailing whitespace (so "1.5" stays whole); CJK full stops do not.
+        .split(/(?<=[.!?])\s+|(?<=[。！？])\s*/u),
+    )
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
 }

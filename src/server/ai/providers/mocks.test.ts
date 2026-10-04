@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { verifyQuote } from '@/server/ai/postprocess/citations';
 import { buildAnswerSchema } from '@/server/ai/prompts/document-qa/output-schema';
 import { EMBEDDING_DIMENSIONS } from '@/server/core/constants';
 
@@ -221,4 +222,85 @@ describe('MockLlmProvider', () => {
       expect(() => new MockLlmProvider({ chunkSize })).toThrow(RangeError);
     },
   );
+});
+
+describe('MockLlmProvider: a request for the gist', () => {
+  const llm = new MockLlmProvider({ chunkSize: 10 });
+  const schema = buildAnswerSchema(['S1', 'S2']);
+
+  async function answerTo(question: string, grounded: Grounding['sources'] = sources) {
+    const grounding: Grounding = { question, sources: grounded };
+    const { text } = await run(llm, request(question, { grounding }));
+    return schema.parse(JSON.parse(text));
+  }
+
+  it.each([
+    'Summarize this document in a few sentences.',
+    'What are the main points to remember?',
+    'Give me an overview',
+    'What are the key points?',
+    'What is this document about?',
+    'what is this about',
+  ])('answers "%s" from the opening of the first source, and cites it', async (question) => {
+    const answer = await answerTo(question);
+
+    expect(answer.status).toBe('answered');
+    expect(answer.answer).toContain('Employees accrue 1.5 vacation days per month.');
+    expect(answer.answer).toContain('Unused days expire on March 31.');
+    expect(answer.answer).toContain('[S1]');
+    expect(answer.citations).toHaveLength(1);
+    expect(answer.citations[0]!.sourceId).toBe('S1');
+    expect(verifyQuote(answer.citations[0]!.quote, sources[0].text)).toBe(true);
+  });
+
+  it('uses at most the first three sentences', async () => {
+    const answer = await answerTo('Summarize this', [
+      { id: 'S1', text: 'One is here. Two is here. Three is here. Four is here.' },
+    ]);
+
+    expect(answer.answer).toBe('One is here. Two is here. Three is here. [S1]');
+  });
+
+  it('prefers the sentence that shares words with the question over a summary', async () => {
+    const answer = await answerTo('Summarize the vacation days');
+
+    expect(answer.answer).toBe('Employees accrue 1.5 vacation days per month. [S1]');
+  });
+
+  it('skips headings, which have no end mark and make a poor opening', async () => {
+    const answer = await answerTo('Give me an overview', [
+      {
+        id: 'S1',
+        text: '# Handbook\n\nThis handbook explains the leave rules. It applies to all staff.\n\nLeave\n\nStaff accrue days monthly.',
+      },
+    ]);
+
+    expect(answer.answer).toBe(
+      'This handbook explains the leave rules. It applies to all staff. Staff accrue days monthly. [S1]',
+    );
+  });
+
+  it('quotes a sentence that was wrapped over two lines in the source, and still verifies', async () => {
+    const text =
+      'The handbook covers leave rules\nand expense rules for staff. It is updated yearly.';
+
+    const answer = await answerTo('What is this document about?', [{ id: 'S1', text }]);
+
+    expect(answer.citations[0]!.quote).toBe(
+      'The handbook covers leave rules and expense rules for staff.',
+    );
+    expect(verifyQuote(answer.citations[0]!.quote, text)).toBe(true);
+  });
+
+  it('still says not_found for a question that is not asking for the gist', async () => {
+    const answer = await answerTo('What is the CEO salary?');
+
+    expect(answer).toMatchObject({ status: 'not_found', citations: [] });
+  });
+
+  it('says not_found when there is nothing to summarize', async () => {
+    const answer = await answerTo('Summarize this document', []);
+
+    expect(answer.status).toBe('not_found');
+  });
 });

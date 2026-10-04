@@ -5,12 +5,15 @@ import { useState, type FormEvent } from 'react';
 
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { LiveStatus, useAnnouncer } from '@/components/ui/live-status';
 import { panelId, tabId, Tabs, type TabItem } from '@/components/ui/tabs';
 import { TextArea } from '@/components/ui/text-area';
 import { TextField } from '@/components/ui/text-field';
+import { useFocusFirstInvalid } from '@/components/ui/use-focus-first-invalid';
 import { useCreateTextDocument, useUploadDocument } from '@/hooks/use-documents';
 import { describeError } from '@/lib/api-errors';
 import { formatBytes } from '@/lib/format';
+import { SAMPLE_DOCUMENT } from '@/lib/sample-document';
 import {
   ACCEPTED_UPLOAD_EXTENSIONS,
   createTextDocumentSchema,
@@ -23,6 +26,10 @@ const TABS: readonly TabItem<Mode>[] = [
   { id: 'paste', label: 'Paste text' },
   { id: 'upload', label: 'Upload a file' },
 ];
+const INTRO: Record<Mode, string> = {
+  paste: 'Paste some text, then ask questions and get answers with quotes you can check.',
+  upload: 'Upload a file, then ask questions and get answers with quotes you can check.',
+};
 const PREFIX = 'new-document';
 const MAX_UPLOAD_BYTES = DEFAULT_MAX_UPLOAD_MB * 1024 * 1024;
 
@@ -33,9 +40,19 @@ function PasteForm({ onCreated }: { readonly onCreated: (id: string) => void }) 
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
+  const formRef = useFocusFirstInvalid(errors);
+  const { message, announce } = useAnnouncer();
+
+  function fillSample() {
+    setTitle(SAMPLE_DOCUMENT.title);
+    setText(SAMPLE_DOCUMENT.text);
+    setErrors({});
+    announce('Sample document filled in. Review it, then choose Add document.');
+  }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (create.isPending) return;
     const parsed = createTextDocumentSchema.safeParse({ title, text });
     if (!parsed.success) {
       const next: FieldErrors = {};
@@ -51,8 +68,14 @@ function PasteForm({ onCreated }: { readonly onCreated: (id: string) => void }) 
   }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <form ref={formRef} onSubmit={onSubmit} noValidate className="space-y-4">
       {create.isError ? <Alert tone="error">{describeError(create.error)}</Alert> : null}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button type="button" variant="secondary" size="sm" onClick={fillSample}>
+          Use a sample document
+        </Button>
+        <span className="text-xs text-slate-600">A short, invented handbook to try the app.</span>
+      </div>
       <TextField
         label="Title"
         name="title"
@@ -75,6 +98,7 @@ function PasteForm({ onCreated }: { readonly onCreated: (id: string) => void }) 
       <Button type="submit" loading={create.isPending}>
         Add document
       </Button>
+      <LiveStatus message={message} />
     </form>
   );
 }
@@ -94,9 +118,11 @@ function UploadForm({ onCreated }: { readonly onCreated: (id: string) => void })
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
+  const formRef = useFocusFirstInvalid(errors);
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (upload.isPending) return;
     if (!file) {
       setErrors({ file: 'Choose a file to upload.' });
       return;
@@ -111,7 +137,7 @@ function UploadForm({ onCreated }: { readonly onCreated: (id: string) => void })
   }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <form ref={formRef} onSubmit={onSubmit} noValidate className="space-y-4">
       {upload.isError ? <Alert tone="error">{describeError(upload.error)}</Alert> : null}
       <div className="space-y-1.5">
         <label htmlFor="upload-file" className="block text-sm font-medium text-slate-700">
@@ -121,16 +147,17 @@ function UploadForm({ onCreated }: { readonly onCreated: (id: string) => void })
           id="upload-file"
           type="file"
           name="file"
+          required
           accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
           onChange={(e) => {
             setFile(e.target.files?.[0] ?? null);
             setErrors({});
           }}
           aria-invalid={errors.file ? true : undefined}
-          aria-describedby="upload-file-hint"
+          aria-describedby={errors.file ? 'upload-file-hint upload-file-error' : 'upload-file-hint'}
           className="block w-full text-sm text-slate-700 file:mr-3 file:h-10 file:rounded-lg file:border file:border-slate-300 file:bg-white file:px-4 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-50"
         />
-        <p id="upload-file-hint" className="text-xs text-slate-500">
+        <p id="upload-file-hint" className="text-xs text-slate-600">
           .txt, .md or .pdf, up to {DEFAULT_MAX_UPLOAD_MB} MB. PDFs need selectable text (scans are
           not supported) and up to {DEFAULT_MAX_PDF_PAGES} pages.
         </p>
@@ -138,7 +165,7 @@ function UploadForm({ onCreated }: { readonly onCreated: (id: string) => void })
           <p className="text-xs text-slate-600">Size: {formatBytes(file.size)}</p>
         ) : null}
         {errors.file ? (
-          <p role="alert" className="text-xs text-red-600">
+          <p id="upload-file-error" role="alert" className="text-xs text-red-600">
             {errors.file}
           </p>
         ) : null}
@@ -172,9 +199,7 @@ export function NewDocumentForm() {
         <h2 id="new-document-heading" className="text-base font-semibold text-slate-900">
           Add a document
         </h2>
-        <p className="text-sm text-slate-600">
-          Add some text, then ask questions and get answers with quotes you can check.
-        </p>
+        <p className="text-sm text-slate-600">{INTRO[mode]}</p>
       </div>
       <Tabs
         label="How to add a document"
@@ -183,8 +208,22 @@ export function NewDocumentForm() {
         value={mode}
         onValueChange={setMode}
       />
-      <div role="tabpanel" id={panelId(PREFIX, mode)} aria-labelledby={tabId(PREFIX, mode)}>
-        {mode === 'paste' ? <PasteForm onCreated={open} /> : <UploadForm onCreated={open} />}
+      {/* Both panels stay mounted, so switching tabs never discards what was typed. */}
+      <div
+        role="tabpanel"
+        id={panelId(PREFIX, 'paste')}
+        aria-labelledby={tabId(PREFIX, 'paste')}
+        hidden={mode !== 'paste'}
+      >
+        <PasteForm onCreated={open} />
+      </div>
+      <div
+        role="tabpanel"
+        id={panelId(PREFIX, 'upload')}
+        aria-labelledby={tabId(PREFIX, 'upload')}
+        hidden={mode !== 'upload'}
+      >
+        <UploadForm onCreated={open} />
       </div>
     </section>
   );

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
@@ -117,5 +117,164 @@ describe('DocumentList', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong on our side');
     expect(screen.getByRole('link', { name: 'Employee handbook' })).toBeInTheDocument();
+  });
+
+  it('lets a long title wrap onto a second line instead of cutting it off', async () => {
+    stubApi({
+      'GET /api/v1/documents': () =>
+        json({ documents: [makeDocument({ title: `Handbook ${'x'.repeat(120)}` })] }),
+    });
+
+    renderWithClient(<DocumentList />);
+
+    const link = await screen.findByRole('link', { name: /^Handbook x+/ });
+    expect(link).toHaveClass('line-clamp-2', 'wrap-break-word');
+    expect(link).not.toHaveClass('truncate');
+  });
+});
+
+describe('DocumentList: where focus goes', () => {
+  const openConfirmation = async (user: ReturnType<typeof userEvent.setup>) =>
+    user.click(await screen.findByRole('button', { name: 'Delete Employee handbook' }));
+
+  it('puts focus on Cancel, the safe choice, when the question opens', async () => {
+    const user = userEvent.setup();
+    stubApi({ 'GET /api/v1/documents': () => json({ documents: [handbook] }) });
+
+    renderWithClient(<DocumentList />);
+    await openConfirmation(user);
+
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  });
+
+  it('gives focus back to the Delete button when the person cancels', async () => {
+    const user = userEvent.setup();
+    stubApi({ 'GET /api/v1/documents': () => json({ documents: [handbook] }) });
+
+    renderWithClient(<DocumentList />);
+    await openConfirmation(user);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.getByRole('button', { name: 'Delete Employee handbook' })).toHaveFocus();
+  });
+
+  it('gives focus back to the Delete button when the delete fails', async () => {
+    const user = userEvent.setup();
+    stubApi({
+      'GET /api/v1/documents': () => json({ documents: [handbook] }),
+      [`DELETE /api/v1/documents/${handbook.id}`]: () => problem(500, 'INTERNAL'),
+    });
+
+    renderWithClient(<DocumentList />);
+    await openConfirmation(user);
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+
+    await screen.findByRole('alert');
+    expect(screen.getByRole('button', { name: 'Delete Employee handbook' })).toHaveFocus();
+  });
+
+  it('moves focus to the list heading after a delete, and says what was deleted', async () => {
+    const user = userEvent.setup();
+    let documents = [handbook, policy];
+    stubApi({
+      'GET /api/v1/documents': () => json({ documents }),
+      [`DELETE /api/v1/documents/${handbook.id}`]: () => {
+        documents = [policy];
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    renderWithClient(<DocumentList />);
+    await openConfirmation(user);
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: 'Your documents' })).toHaveFocus(),
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Employee handbook was deleted.');
+  });
+
+  it('says it again when a second document with the same title is deleted', async () => {
+    const user = userEvent.setup();
+    const twin = makeDocument({ title: 'Employee handbook' });
+    let documents = [handbook, twin];
+    stubApi({
+      'GET /api/v1/documents': () => json({ documents }),
+      [`DELETE /api/v1/documents/${handbook.id}`]: () => {
+        documents = [twin];
+        return new Response(null, { status: 204 });
+      },
+      [`DELETE /api/v1/documents/${twin.id}`]: () => {
+        documents = [];
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    renderWithClient(<DocumentList />);
+    const [firstDelete] = await screen.findAllByRole('button', {
+      name: 'Delete Employee handbook',
+    });
+    await user.click(firstDelete!);
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('Employee handbook was deleted.'),
+    );
+    const first = screen.getByRole('status').textContent;
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: 'Delete Employee handbook' })).toHaveLength(1),
+    );
+
+    await openConfirmation(user);
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).not.toBe(first));
+    expect(screen.getByRole('status')).toHaveTextContent('Employee handbook was deleted.');
+  });
+
+  it('leaves focus alone if the person moved on while the delete was running', async () => {
+    const user = userEvent.setup();
+    let documents = [handbook, policy];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    stubApi({
+      'GET /api/v1/documents': () => json({ documents }),
+      [`DELETE /api/v1/documents/${handbook.id}`]: async () => {
+        await gate;
+        documents = [policy];
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    renderWithClient(<DocumentList />);
+    await openConfirmation(user);
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+    const elsewhere = screen.getByRole('link', { name: 'Leave policy' });
+    act(() => elsewhere.focus());
+    release();
+
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: 'Employee handbook' })).not.toBeInTheDocument(),
+    );
+    expect(elsewhere).toHaveFocus();
+    expect(screen.getByRole('status')).toHaveTextContent('Employee handbook was deleted.');
+  });
+
+  it('keeps Yes, delete focused while it works, and sends one request however often it is pressed', async () => {
+    const user = userEvent.setup();
+    const api = stubApi({
+      'GET /api/v1/documents': () => json({ documents: [handbook] }),
+      [`DELETE /api/v1/documents/${handbook.id}`]: () => new Promise<Response>(() => undefined),
+    });
+
+    renderWithClient(<DocumentList />);
+    await openConfirmation(user);
+    await user.click(screen.getByRole('button', { name: 'Yes, delete' }));
+    const waiting = await screen.findByRole('button', { name: 'Please wait…' });
+    await user.click(waiting);
+    await user.click(waiting);
+
+    expect(waiting).toHaveFocus();
+    expect(waiting).toHaveAttribute('aria-disabled', 'true');
+    expect(api.callsTo(`DELETE /api/v1/documents/${handbook.id}`)).toHaveLength(1);
   });
 });

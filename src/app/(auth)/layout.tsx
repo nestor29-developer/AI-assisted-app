@@ -8,7 +8,10 @@ export default async function AuthLayout({ children }: { children: ReactNode }) 
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-4 py-10">
-      <p className="mb-6 text-sm font-semibold tracking-wide text-indigo-600">Document Q&amp;A</p>
+      <p className="text-sm font-semibold tracking-wide text-indigo-600">Document Q&amp;A</p>
+      <p className="mt-1 mb-6 text-sm text-slate-600">
+        Ask questions about your documents. Every answer comes with quotes you can check.
+      </p>
       {children}
     </main>
   );

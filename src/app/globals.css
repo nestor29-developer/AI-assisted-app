@@ -4,3 +4,12 @@
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
 }
+
+/* Tailwind v4 leaves buttons on the arrow; links already show a hand, so what acts like one should too. */
+@layer base {
+  button:not(:disabled),
+  [role='tab'],
+  summary {
+    cursor: pointer;
+  }
+}

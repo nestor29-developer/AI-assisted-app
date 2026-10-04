@@ -7,6 +7,7 @@ import { useState, type FormEvent } from 'react';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { TextField } from '@/components/ui/text-field';
+import { useFocusFirstInvalid } from '@/components/ui/use-focus-first-invalid';
 import { apiFetch, ApiError } from '@/lib/api-client';
 import { describeError } from '@/lib/api-errors';
 import {
@@ -53,9 +54,11 @@ export function AuthForm({ mode }: { readonly mode: Mode }) {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const formRef = useFocusFirstInvalid(fieldErrors);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pending) return;
     setFormError(null);
 
     const parsed = copy.schema.safeParse({ email, password });
@@ -89,7 +92,7 @@ export function AuthForm({ mode }: { readonly mode: Mode }) {
   }
 
   return (
-    <form onSubmit={onSubmit} noValidate className="space-y-4">
+    <form ref={formRef} onSubmit={onSubmit} noValidate className="space-y-4">
       <h1 className="text-xl font-semibold text-slate-900">{copy.title}</h1>
       {formError ? <Alert tone="error">{formError}</Alert> : null}
       <TextField

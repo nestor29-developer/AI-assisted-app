@@ -2,10 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import type { DocumentSummary } from '@/shared/contracts/documents';
 
-import { describeKind, formatBytes, formatDuration, formatExpiry, formatTokens } from './format';
+import {
+  describeKind,
+  ellipsize,
+  formatBytes,
+  formatDuration,
+  formatExpiry,
+  formatTokens,
+} from './format';
 
 const NOW = new Date('2026-10-01T12:00:00Z');
-const daysFromNow = (days: number) => new Date(NOW.getTime() + days * 86_400_000).toISOString();
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const after = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
 
 const document = (overrides: Partial<DocumentSummary>): DocumentSummary => ({
   id: '00000000-0000-4000-8000-000000000000',
@@ -16,7 +26,7 @@ const document = (overrides: Partial<DocumentSummary>): DocumentSummary => ({
   pageCount: null,
   chunkCount: 1,
   createdAt: NOW.toISOString(),
-  expiresAt: daysFromNow(30),
+  expiresAt: after(30 * DAY),
   ...overrides,
 });
 
@@ -26,7 +36,9 @@ describe('formatBytes', () => {
     [999, '999 B'],
     [1_000, '1 KB'],
     [48_400, '48 KB'],
-    [999_999, '1000 KB'],
+    [999_499, '999 KB'],
+    [999_500, '1.0 MB'],
+    [999_999, '1.0 MB'],
     [1_000_000, '1.0 MB'],
     [10_485_760, '10.5 MB'],
   ])('formats %i bytes as %s', (bytes, expected) => {
@@ -36,14 +48,32 @@ describe('formatBytes', () => {
 
 describe('formatExpiry', () => {
   it.each([
-    [30, 'Deletes in 30 days'],
-    [2, 'Deletes in 2 days'],
-    [1, 'Deletes tomorrow'],
-    [0.4, 'Deletes tomorrow'],
-    [0, 'Deletes today'],
-    [-1, 'Expired'],
-  ])('describes %s days away as "%s"', (days, expected) => {
-    expect(formatExpiry(daysFromNow(days), NOW)).toBe(expected);
+    [30 * DAY, 'Auto-deletes in 30 days'],
+    [30 * DAY - 5_000, 'Auto-deletes in 30 days'],
+    [2 * DAY, 'Auto-deletes in 2 days'],
+    [DAY, 'Auto-deletes in 1 day'],
+    [DAY + HOUR, 'Auto-deletes in 1 day'],
+    [DAY - MINUTE, 'Auto-deletes in 23 hours'],
+    [9 * HOUR + 36 * MINUTE, 'Auto-deletes in 9 hours'],
+    [2 * HOUR, 'Auto-deletes in 2 hours'],
+    [HOUR, 'Auto-deletes in 1 hour'],
+    [HOUR - MINUTE, 'Auto-deletes within the hour'],
+    [MINUTE, 'Auto-deletes within the hour'],
+  ])('describes %i ms away as "%s"', (ms, expected) => {
+    expect(formatExpiry(after(ms), NOW)).toBe(expected);
+  });
+
+  it('never calls a document that is already gone something that will be deleted', () => {
+    expect(formatExpiry(after(0), NOW)).toBe('Expired');
+    expect(formatExpiry(after(-MINUTE), NOW)).toBe('Expired');
+    expect(formatExpiry(after(-2 * HOUR), NOW)).toBe('Expired');
+    expect(formatExpiry(after(-DAY), NOW)).toBe('Expired');
+  });
+
+  it('does not say "tomorrow" for a document with hours left, nor "today" for an expired one', () => {
+    for (const ms of [-2 * HOUR, 0, 2 * HOUR, 20 * HOUR, 2 * DAY]) {
+      expect(formatExpiry(after(ms), NOW)).not.toMatch(/tomorrow|today/);
+    }
   });
 
   it('treats an unreadable date as expired instead of showing NaN', () => {
@@ -74,5 +104,29 @@ describe('formatDuration and formatTokens', () => {
   it('groups thousands', () => {
     expect(formatTokens(1_234_567)).toBe('1,234,567');
     expect(formatTokens(12)).toBe('12');
+  });
+});
+
+describe('ellipsize', () => {
+  it('leaves short text alone and flattens its whitespace', () => {
+    expect(ellipsize('  How many\n days?  ', 40)).toBe('How many days?');
+  });
+
+  it('cuts long text at a word and ends it with an ellipsis, within the limit', () => {
+    const cut = ellipsize('How many vacation days do employees accrue per month in total?', 30);
+
+    expect(cut).toBe('How many vacation days do…');
+    expect([...cut].length).toBeLessThanOrEqual(30);
+  });
+
+  it('cuts a single long word where it has to', () => {
+    expect(ellipsize('x'.repeat(100), 10)).toBe(`${'x'.repeat(9)}…`);
+  });
+
+  it('never splits a character that takes two code units', () => {
+    const cut = ellipsize('\u{1F389}'.repeat(30), 10);
+
+    expect(cut.isWellFormed()).toBe(true);
+    expect([...cut]).toHaveLength(10);
   });
 });

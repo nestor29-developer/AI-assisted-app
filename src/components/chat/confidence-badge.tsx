@@ -7,14 +7,19 @@ interface Presentation {
   readonly hint: string;
 }
 
+type Verdict = Pick<AssistantAnswer, 'status' | 'confidence'>;
+type Checked = Verdict & Pick<AssistantAnswer, 'citations'>;
+
+const PARTIAL = {
+  label: 'Partial answer',
+  hint: 'The document answers only part of the question.',
+} as const;
+
 /** What the badge says is decided by the checks we ran, never by how sure the model sounded. */
-export function describeConfidence({
-  status,
-  confidence,
-}: Pick<AssistantAnswer, 'status' | 'confidence'>): Presentation {
+export function describeConfidence({ status, confidence }: Verdict): Presentation {
   if (status === 'not_found') {
     return {
-      label: 'Not found in the document',
+      label: 'No answer found',
       tone: 'neutral',
       hint: 'The document does not seem to answer this question.',
     };
@@ -35,9 +40,9 @@ export function describeConfidence({
   }
   if (confidence === 'high') {
     return {
-      label: 'Grounded in the document',
+      label: 'Quotes verified',
       tone: 'success',
-      hint: 'Every quote was found in the document.',
+      hint: 'Every quote was found in the excerpt it cites. That shows the quotes are real, not that the answer is right.',
     };
   }
   if (confidence === 'medium') {
@@ -50,19 +55,48 @@ export function describeConfidence({
   return {
     label: 'Unverified, double-check',
     tone: 'danger',
-    hint: 'No quote could be checked against the document.',
+    hint: 'No quote could be matched to the excerpt it cites.',
   };
 }
 
-export function ConfidenceBadge({
-  status,
-  confidence,
-}: Pick<AssistantAnswer, 'status' | 'confidence'>) {
+/** A partial answer whose quotes all check out is capped at medium; a second verdict would only contradict it. */
+function isFullyQuotedPartial({ status, citations }: Checked): boolean {
+  return (
+    status === 'partially_answered' &&
+    citations.length > 0 &&
+    citations.every((citation) => citation.verified)
+  );
+}
+
+/** The labels shown on a card, in order, so a new answer can be announced with the same words. */
+export function describeBadges(answer: Checked): string[] {
+  return [
+    ...(isFullyQuotedPartial(answer) ? [] : [describeConfidence(answer).label]),
+    ...(answer.status === 'partially_answered' ? [PARTIAL.label] : []),
+  ];
+}
+
+export function ConfidenceBadge({ status, confidence }: Verdict) {
   const { label, tone, hint } = describeConfidence({ status, confidence });
   return (
-    <Badge tone={tone}>
+    <Badge tone={tone} title={hint}>
       {label}
       <span className="sr-only">. {hint}</span>
     </Badge>
+  );
+}
+
+export function AnswerBadges({ answer }: { readonly answer: Checked }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {isFullyQuotedPartial(answer) ? null : (
+        <ConfidenceBadge status={answer.status} confidence={answer.confidence} />
+      )}
+      {answer.status === 'partially_answered' ? (
+        <Badge tone="warning" title={PARTIAL.hint}>
+          {PARTIAL.label}
+        </Badge>
+      ) : null}
+    </div>
   );
 }

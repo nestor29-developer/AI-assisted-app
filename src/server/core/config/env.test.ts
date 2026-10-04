@@ -30,7 +30,7 @@ describe('loadConfig', () => {
     expect(config.ai.provider).toBe('mock');
     expect(config.ai.llmModel).toBe('gemini-3.8-flash');
     expect(config.ai.ragTopK).toBe(6);
-    expect(config.ai.mockChunkDelayMs).toBe(15);
+    expect(config.ai.mockChunkDelayMs).toBe(40);
     expect(config.appOrigins).toEqual(['http://localhost:3000']);
     expect(config.auth.sessionTtlSeconds).toBe(8 * 3600);
     expect(config.auth.cookieSecure).toBe(false);

@@ -1,4 +1,7 @@
+import { memo } from 'react';
+
 import { Button } from '@/components/ui/button';
+import { CARD_TITLE } from '@/components/ui/card-title';
 import { describeFailedReply } from '@/lib/api-errors';
 import type { MessageDto } from '@/shared/contracts/messages';
 
@@ -26,22 +29,28 @@ function ReplyActions({
   );
 }
 
-/** An answer the user stopped: what was written so far, and a way to ask again. */
+/** An answer that ended early: what was written so far, marked unfinished, and a way to ask again. */
 export function StoppedReply({
   partial,
   question,
   actions,
+  byUser,
 }: {
   readonly partial: string;
   readonly question: string | null;
   readonly actions: AnswerActions;
+  /** The server stores a pressed Stop and a dropped connection alike, so only this session can claim it. */
+  readonly byUser: boolean;
 }) {
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
-      <p className="text-sm font-medium text-slate-900">You stopped this answer</p>
+      <p className={`${CARD_TITLE} text-slate-900`}>
+        {byUser ? 'You stopped this answer' : 'This answer was cut short'}
+      </p>
       {partial ? (
-        <p className="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-600">
-          {partial}
+        <p className="max-w-[72ch] text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-600 italic">
+          {partial.trimEnd()}
+          <span aria-hidden="true"> …</span>
         </p>
       ) : null}
       <ReplyActions question={question} actions={actions} label="Ask again" />
@@ -49,20 +58,22 @@ export function StoppedReply({
   );
 }
 
-/** One stored reply: a checked answer, an error that was kept, or an answer the user stopped. */
-export function AssistantMessage({
+/** One stored reply: a checked answer, an error that was kept, or an answer that ended early. */
+export const AssistantMessage = memo(function AssistantMessage({
   message,
   question,
   actions,
+  stoppedByUser,
 }: {
   readonly message: MessageDto;
   readonly question: string | null;
   readonly actions: AnswerActions;
+  readonly stoppedByUser: boolean;
 }) {
   if (message.status === 'failed') {
     return (
       <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
-        <p className="text-sm font-medium text-red-900">Could not get an answer</p>
+        <p className={`${CARD_TITLE} text-red-900`}>Could not get an answer</p>
         <p className="text-sm text-red-800">{describeFailedReply(message.errorCode)}</p>
         <ReplyActions question={question} actions={actions} label="Try again" />
       </div>
@@ -70,7 +81,14 @@ export function AssistantMessage({
   }
 
   if (message.status === 'cancelled') {
-    return <StoppedReply partial={message.content} question={question} actions={actions} />;
+    return (
+      <StoppedReply
+        partial={message.content}
+        question={question}
+        actions={actions}
+        byUser={stoppedByUser}
+      />
+    );
   }
 
   if (message.answer) {
@@ -79,8 +97,10 @@ export function AssistantMessage({
     );
   }
   return (
-    <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-800">
-      {message.content}
-    </p>
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <p className="max-w-[72ch] text-sm leading-relaxed wrap-break-word whitespace-pre-wrap text-slate-800">
+        {message.content}
+      </p>
+    </div>
   );
-}
+});

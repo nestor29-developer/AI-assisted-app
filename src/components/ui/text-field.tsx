@@ -8,7 +8,9 @@ interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'id
 
 export function TextField({ label, hint, error, className = '', ...rest }: TextFieldProps) {
   const id = useId();
-  const describedBy = [hint ? `${id}-hint` : null, error ? `${id}-error` : null]
+  // The hint gives way to the error, so only what is on screen is referenced.
+  const showHint = Boolean(hint) && !error;
+  const describedBy = [showHint ? `${id}-hint` : null, error ? `${id}-error` : null]
     .filter(Boolean)
     .join(' ');
 
@@ -22,10 +24,10 @@ export function TextField({ label, hint, error, className = '', ...rest }: TextF
         id={id}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy || undefined}
-        className={`block h-10 w-full rounded-lg border bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-indigo-600 ${error ? 'border-red-500' : 'border-slate-300'} ${className}`}
+        className={`block h-10 w-full rounded-lg border bg-white px-3 text-sm text-slate-900 placeholder:text-slate-500 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-indigo-600 ${error ? 'border-red-500' : 'border-slate-500'} ${className}`}
       />
-      {hint && !error ? (
-        <p id={`${id}-hint`} className="text-xs text-slate-500">
+      {showHint ? (
+        <p id={`${id}-hint`} className="text-xs text-slate-600">
           {hint}
         </p>
       ) : null}

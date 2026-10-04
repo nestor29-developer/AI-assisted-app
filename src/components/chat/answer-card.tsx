@@ -1,17 +1,19 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { formatDuration, formatTokens } from '@/lib/format';
+import { CARD_TITLE } from '@/components/ui/card-title';
+import { ellipsize, formatDuration, formatTokens } from '@/lib/format';
 import type { AssistantAnswer, MessageDto } from '@/shared/contracts/messages';
 import { extractSourceMarkers } from '@/shared/source-markers';
 
 import { AnswerText } from './answer-text';
-import { ConfidenceBadge } from './confidence-badge';
+import { AnswerBadges } from './confidence-badge';
 import { FeedbackButtons } from './feedback-buttons';
+import { sourceRowId } from './source-ids';
 import { SourceList } from './source-list';
+import { STARTER_QUESTIONS } from './starter-questions';
 import { SuggestionChip } from './suggestion-chip';
 
 const WARNING_COPY: Record<AssistantAnswer['warnings'][number], string> = {
@@ -30,6 +32,20 @@ export interface AnswerActions {
   readonly onRate: (messageId: string, value: 'up' | 'down') => void;
 }
 
+/** Each datum stays on one line, so a narrow screen breaks between them and never inside one. */
+function Meta({ data }: { readonly data: readonly string[] }) {
+  return (
+    <p className="text-xs text-slate-600">
+      {data.map((datum, index) => (
+        <Fragment key={`${index}-${datum}`}>
+          {index > 0 ? ' · ' : null}
+          <span className="whitespace-nowrap">{datum}</span>
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
 export function AnswerCard({
   message,
   answer,
@@ -42,7 +58,9 @@ export function AnswerCard({
   readonly question: string | null;
   readonly actions: AnswerActions;
 }) {
+  const scope = useId();
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(new Set());
+  const reveal = useRef<string | null>(null);
   const markedIds = useMemo(() => extractSourceMarkers(answer.answer), [answer.answer]);
   const knownIds = useMemo(
     () => new Set(answer.sources.map((source) => source.id)),
@@ -57,50 +75,73 @@ export function AnswerCard({
       return next;
     });
 
-  const selectSource = (id: string) => {
+  const toggleSource = (id: string) => {
+    if (openIds.has(id)) {
+      setOpen(id, false);
+      return;
+    }
+    reveal.current = id;
     setOpen(id, true);
-    document.getElementById(`source-${id}`)?.scrollIntoView({ block: 'nearest' });
   };
 
+  // Once a chip has opened its excerpt, show the excerpt and move focus there, off the chip.
+  useEffect(() => {
+    const id = reveal.current;
+    if (id === null || !openIds.has(id)) return;
+    reveal.current = null;
+    const row = document.getElementById(sourceRowId(scope, id));
+    row?.scrollIntoView({ block: 'nearest' });
+    row?.querySelector('summary')?.focus({ preventScroll: true });
+  }, [openIds, scope]);
+
   const { meta } = answer;
+  const notFound = answer.status === 'not_found';
+  const suggestions =
+    notFound && answer.followUpQuestions.length === 0
+      ? STARTER_QUESTIONS
+      : answer.followUpQuestions;
+  // The badge already says an unreadable reply was malformed.
+  const warnings = answer.warnings.filter(
+    (warning) => !(warning === 'MALFORMED_OUTPUT' && answer.status === 'unreadable'),
+  );
+
   return (
     <article
-      aria-label="Answer"
+      aria-label={question ? `Answer to: ${ellipsize(question, 80)}` : 'Answer'}
       className="space-y-4 rounded-xl border border-slate-200 bg-white p-4"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <ConfidenceBadge status={answer.status} confidence={answer.confidence} />
-        {answer.status === 'partially_answered' ? (
-          <Badge tone="warning">Partial answer</Badge>
-        ) : null}
-      </div>
+      <AnswerBadges answer={answer} />
 
-      <AnswerText text={answer.answer} markers={{ knownIds, openIds, onSelect: selectSource }} />
+      <AnswerText
+        text={answer.answer}
+        markers={{ knownIds, openIds, scope, onToggle: toggleSource }}
+      />
 
-      {answer.warnings.length > 0 ? (
+      {warnings.length > 0 ? (
         <ul className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          {answer.warnings.map((warning) => (
-            <li key={warning}>{WARNING_COPY[warning]}</li>
+          {warnings.map((warning, index) => (
+            <li key={`${index}-${warning}`}>{WARNING_COPY[warning]}</li>
           ))}
         </ul>
       ) : null}
 
       <SourceList
+        scope={scope}
         citations={answer.citations}
         sources={answer.sources}
         markedIds={markedIds}
         openIds={openIds}
-        onToggle={setOpen}
+        onOpenChange={setOpen}
       />
 
-      {answer.followUpQuestions.length > 0 ? (
-        <section aria-label="Follow-up questions" className="space-y-2">
-          <h2 className="text-sm font-semibold text-slate-900">You could also ask</h2>
+      {suggestions.length > 0 ? (
+        <section className="space-y-2">
+          <h2 className={`${CARD_TITLE} text-slate-900`}>You could also ask</h2>
           <div className="flex flex-wrap gap-2">
-            {answer.followUpQuestions.map((followUp) => (
+            {suggestions.map((suggestion, index) => (
               <SuggestionChip
-                key={followUp}
-                question={followUp}
+                key={`${index}-${suggestion}`}
+                question={suggestion}
                 disabled={actions.busy}
                 onAsk={actions.onAsk}
               />
@@ -126,7 +167,7 @@ export function AnswerCard({
               disabled={actions.busy}
               onClick={() => actions.onEdit(question)}
             >
-              Edit question
+              {notFound ? 'Try rephrasing' : 'Edit question'}
             </Button>
           </>
         ) : null}
@@ -136,10 +177,14 @@ export function AnswerCard({
         />
       </div>
 
-      <p className="text-xs text-slate-500">
-        {meta.model} · prompt {meta.promptVersion} · {formatTokens(meta.inputTokens)} in /{' '}
-        {formatTokens(meta.outputTokens)} out tokens · {formatDuration(meta.latencyMs)}
-      </p>
+      <Meta
+        data={[
+          meta.model,
+          `prompt ${meta.promptVersion}`,
+          `${formatTokens(meta.inputTokens)} in / ${formatTokens(meta.outputTokens)} out tokens`,
+          formatDuration(meta.latencyMs),
+        ]}
+      />
     </article>
   );
 }

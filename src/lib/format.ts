@@ -1,23 +1,28 @@
 import type { DocumentSummary } from '@/shared/contracts/documents';
 
+const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
+
+const pluralize = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1_000) return `${bytes} B`;
-  if (bytes < 1_000_000) return `${Math.round(bytes / 1_000)} KB`;
+  const kilobytes = Math.round(bytes / 1_000);
+  // 999,999 bytes rounds up to 1000 KB, which is a megabyte.
+  if (kilobytes < 1_000) return `${kilobytes} KB`;
   return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
-/** How long until a document is deleted automatically, in words. */
+/** How long until a document is deleted automatically, in words; the time left decides, not the calendar. */
 export function formatExpiry(expiresAtIso: string, now: Date = new Date()): string {
-  const days = Math.ceil((Date.parse(expiresAtIso) - now.getTime()) / DAY_MS);
-  if (Number.isNaN(days) || days < 0) return 'Expired';
-  if (days === 0) return 'Deletes today';
-  if (days === 1) return 'Deletes tomorrow';
-  return `Deletes in ${days} days`;
+  const remaining = Date.parse(expiresAtIso) - now.getTime();
+  if (Number.isNaN(remaining) || remaining <= 0) return 'Expired';
+  if (remaining < HOUR_MS) return 'Auto-deletes within the hour';
+  if (remaining < DAY_MS) {
+    return `Auto-deletes in ${pluralize(Math.floor(remaining / HOUR_MS), 'hour')}`;
+  }
+  return `Auto-deletes in ${pluralize(Math.max(1, Math.round(remaining / DAY_MS)), 'day')}`;
 }
-
-const pluralize = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 
 /** "PDF, 12 pages" or "Markdown file" or "Pasted text": what the document came from. */
 export function describeKind({ sourceType, mimeType, pageCount }: DocumentSummary): string {
@@ -32,3 +37,12 @@ export function formatDuration(ms: number): string {
 }
 
 export const formatTokens = (count: number): string => count.toLocaleString('en-US');
+
+/** Flattens whitespace and cuts to at most `max` characters, at a word where that keeps most of it. */
+export function ellipsize(text: string, max: number): string {
+  const characters = Array.from(text.replace(/\s+/g, ' ').trim());
+  if (characters.length <= max) return characters.join('');
+  const cut = characters.slice(0, max - 1).join('');
+  const atWord = cut.replace(/\s+\S*$/, '');
+  return `${(atWord.length >= max / 2 ? atWord : cut).trimEnd()}…`;
+}

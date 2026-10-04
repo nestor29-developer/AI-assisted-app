@@ -10,7 +10,23 @@ export interface TabItem<Id extends string> {
 export const tabId = (prefix: string, id: string) => `${prefix}-tab-${id}`;
 export const panelId = (prefix: string, id: string) => `${prefix}-panel-${id}`;
 
-/** An accessible tab list: arrow keys move between tabs. The caller renders the matching tabpanel. */
+/** The index a key moves to, or null for keys that are not ours. */
+function targetIndex(key: string, current: number, count: number): number | null {
+  switch (key) {
+    case 'ArrowRight':
+      return (current + 1) % count;
+    case 'ArrowLeft':
+      return (current - 1 + count) % count;
+    case 'Home':
+      return 0;
+    case 'End':
+      return count - 1;
+    default:
+      return null;
+  }
+}
+
+/** An accessible tab list: arrow keys, Home and End move between tabs. The caller renders every tabpanel. */
 export function Tabs<Id extends string>({
   label,
   idPrefix,
@@ -27,11 +43,13 @@ export function Tabs<Id extends string>({
   const refs = useRef(new Map<Id, HTMLButtonElement>());
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    // Alt+Arrow and Cmd+Arrow are the browser's own history shortcuts.
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     const current = tabs.findIndex((tab) => tab.id === value);
-    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-    if (step === 0) return;
+    const index = targetIndex(event.key, current, tabs.length);
+    if (index === null) return;
     event.preventDefault();
-    const next = tabs[(current + step + tabs.length) % tabs.length];
+    const next = tabs[index];
     if (!next) return;
     onValueChange(next.id);
     refs.current.get(next.id)?.focus();
@@ -61,7 +79,9 @@ export function Tabs<Id extends string>({
             tabIndex={selected ? 0 : -1}
             onClick={() => onValueChange(tab.id)}
             className={`h-8 rounded-md px-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
-              selected ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              selected
+                ? 'bg-white text-slate-900 underline decoration-indigo-600 decoration-2 underline-offset-4 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             {tab.label}

@@ -9,6 +9,31 @@ import type { Grounding, LlmEvent, LlmProvider, LlmRequest } from './types';
 
 const MAX_QUOTE_WORDS = 25;
 const STRONG_MATCH_RATIO = 0.5;
+/** Asking for the gist shares no words with the document, so it is answered from the opening. */
+const SUMMARY_REQUEST = /summar|main points|key points|overview|what is this (document )?about/i;
+const SUMMARY_SENTENCES = 3;
+const SENTENCE_END = /[.!?。！？]["')\]]?$/u;
+const SUMMARY_FOLLOW_UPS = ['Which dates or deadlines does it mention?'];
+
+const firstWords = (text: string) => text.split(/\s+/).slice(0, MAX_QUOTE_WORDS).join(' ');
+
+/** The first two or three sentences of the first source, with a quote taken whole from one of them. */
+function summarize(sources: Grounding['sources']): AnswerPayload | null {
+  const first = sources[0];
+  if (!first) return null;
+  const sentences = splitSentences(first.text);
+  // A heading has no end mark and makes a poor opening, so it is skipped.
+  const prose = sentences.filter((sentence) => SENTENCE_END.test(sentence));
+  const lead = (prose.length > 0 ? prose : sentences).slice(0, SUMMARY_SENTENCES);
+  const quoted = lead.find((sentence) => sentence.split(/\s+/).length >= 4) ?? lead[0];
+  if (!quoted) return null;
+  return {
+    answer: `${lead.join(' ')} [${first.id}]`,
+    citations: [{ sourceId: first.id, quote: firstWords(quoted) }],
+    status: 'answered',
+    followUpQuestions: SUMMARY_FOLLOW_UPS,
+  };
+}
 
 export interface MockLlmOptions {
   /** Characters per streamed chunk. */
@@ -31,18 +56,20 @@ function buildAnswer({ question, sources }: Grounding): AnswerPayload {
   }
 
   if (!best || best.score === 0) {
-    return {
-      answer: "I couldn't find that in this document.",
-      citations: [],
-      status: 'not_found',
-      followUpQuestions: [],
-    };
+    const summary = SUMMARY_REQUEST.test(question) ? summarize(sources) : null;
+    return (
+      summary ?? {
+        answer: "I couldn't find that in this document.",
+        citations: [],
+        status: 'not_found',
+        followUpQuestions: [],
+      }
+    );
   }
 
-  const quote = best.sentence.split(/\s+/).slice(0, MAX_QUOTE_WORDS).join(' ');
   return {
     answer: `${best.sentence} [${best.sourceId}]`,
-    citations: [{ sourceId: best.sourceId, quote }],
+    citations: [{ sourceId: best.sourceId, quote: firstWords(best.sentence) }],
     status:
       best.score / questionTokens.size >= STRONG_MATCH_RATIO ? 'answered' : 'partially_answered',
     followUpQuestions: [

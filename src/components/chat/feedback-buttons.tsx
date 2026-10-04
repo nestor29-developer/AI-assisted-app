@@ -1,8 +1,12 @@
 import { Button } from '@/components/ui/button';
 
+import { ThumbIcon } from './thumb-icon';
+
 type Rating = 'up' | 'down';
 
-const PRESSED = 'aria-pressed:border-indigo-300 aria-pressed:bg-indigo-50';
+// An inset ring thickens the border without moving anything, and leaves the outline free for focus.
+const PRESSED =
+  'aria-pressed:border-indigo-600 aria-pressed:bg-indigo-50 aria-pressed:text-indigo-700 aria-pressed:ring-1 aria-pressed:ring-indigo-600 aria-pressed:ring-inset';
 
 export function FeedbackButtons({
   value,
@@ -15,7 +19,7 @@ export function FeedbackButtons({
 }) {
   return (
     <div role="group" aria-label="Rate this answer" className="ml-auto flex items-center gap-2">
-      <span role="status" className="text-xs text-slate-600">
+      <span className="text-xs text-slate-600">
         {value ? 'Thanks for the feedback' : 'Was this helpful?'}
       </span>
       <Button
@@ -27,7 +31,7 @@ export function FeedbackButtons({
         onClick={() => onRate('up')}
         className={PRESSED}
       >
-        <span aria-hidden="true">👍</span>
+        <ThumbIcon direction="up" filled={value === 'up'} />
       </Button>
       <Button
         variant="secondary"
@@ -38,7 +42,7 @@ export function FeedbackButtons({
         onClick={() => onRate('down')}
         className={PRESSED}
       >
-        <span aria-hidden="true">👎</span>
+        <ThumbIcon direction="down" filled={value === 'down'} />
       </Button>
     </div>
   );
