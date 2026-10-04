@@ -1,6 +1,6 @@
 # AI Document Q&A
 
-Ask questions about your documents and get answers you can check. Every claim in an answer points to a quote, and the server verifies each quote against the document before it shows a confidence level.
+Ask questions about your documents and get answers you can check. The model is told to back every claim with a quote, and the server verifies each quote it is given against the document before it shows a confidence level.
 
 Built for the Full Stack AI Engineer assessment: Next.js and TypeScript, PostgreSQL with pgvector, Gemini, and AWS infrastructure as validated Terraform. It runs end to end with **no API key**, on an offline mock model.
 
@@ -33,7 +33,7 @@ npm run db:migrate              # applies ./drizzle (enables pgvector, creates t
 npm run dev                     # http://localhost:3000
 ```
 
-Port 3000 or 5432 already taken? Run the app on another port with `PORT=3100 APP_ORIGIN=http://localhost:3100 npm run dev` (`APP_ORIGIN` must be the URL you actually open, because cookies and the cross-site check depend on it), and set `DB_HOST_PORT` for Postgres.
+Port 3000 or 5432 already taken? Run the app on another port with `PORT=3100 APP_ORIGIN=http://localhost:3100 npm run dev` (`APP_ORIGIN` must be the URL you actually open: the cross-site check compares it with the browser's `Origin`, and an https origin turns on the Secure cookie). For Postgres, set `DB_HOST_PORT` and use the same port in `DATABASE_URL`.
 
 Every setting is an environment variable, checked at boot by [`env.ts`](src/server/core/config/env.ts), which also holds the defaults; [`.env.example`](.env.example) lists the ones worth changing locally.
 
@@ -43,7 +43,7 @@ Every setting is an environment variable, checked at boot by [`env.ts`](src/serv
 2. Add a document. The quickest way is **Use a sample document** and then **Add document** (a short, invented handbook). Or paste text, or upload [`evals/fixtures/handbook.md`](evals/fixtures/handbook.md) (a fictional 13 KB handbook, big enough to need retrieval) or [`scripts/fixtures/sample-policy.pdf`](scripts/fixtures/sample-policy.pdf) (three pages, so citations show page numbers).
 3. Click a starter question, or ask "How many vacation days do I earn per month?", and open a source marker (`S1`) in the answer to see the quote it came from. Then ask something unrelated ("What is the capital of France?") and see the "not found" state.
 
-The mock model is extractive: it answers with the best-matching sentence, so its quotes really verify, but it cannot paraphrase or reason. A request for the gist ("summarize", "key points", "what is this about") is answered from the opening sentences of the document. It also answers an off-topic question with an unrelated sentence whenever a single word overlaps (try "Who founded the company?"), and the badge then still says the quote was verified. That is why "verified" is worded narrowly: the quote exists in the text, which is not the same as the answer being true. A real model is expected to decline such questions, and the `not_found` cases of `npm run eval -- --provider gemini` measure that. The mock streams slowly on purpose (40 ms a chunk) so the stages and the Stop button can be seen; `MOCK_LLM_CHUNK_DELAY_MS=0` makes it instant and `300` gives more time to press Stop.
+The mock model is extractive: it answers with the best-matching sentence, so its quotes really verify, but it cannot paraphrase or reason. A request for the gist is answered from the opening sentences of the document, but only when it shares no word with the text (try the starter question "Summarize this document in a few sentences."); otherwise it answers with the best-matching sentence. It also answers an off-topic question with an unrelated sentence whenever a single word overlaps (try "Who founded the company?"), and the badge then still says the quote was verified. That is why "verified" is worded narrowly: the quote exists in the text, which is not the same as the answer being true. A real model is expected to decline such questions, and the `not_found` cases of `npm run eval -- --provider gemini` measure that. The mock streams slowly on purpose (40 ms a chunk) so the stages and the Stop button can be seen; `MOCK_LLM_CHUNK_DELAY_MS=1` makes it near-instant (the allowed range is 1 to 5000) and `300` gives more time to press Stop.
 
 ### Using the real model (Gemini)
 
@@ -56,6 +56,7 @@ The mock model is extractive: it answers with the best-matching sentence, so its
 
 ```bash
 docker compose --profile full up --build   # db + migrations + production image on http://localhost:3000
+                                           # (Compose reads JWT_SECRET from the .env that `npm run setup` creates)
 ```
 
 ### Checks
@@ -140,7 +141,7 @@ flowchart TB
   providers --> llm[(Gemini)]
 ```
 
-Patterns, named so they are easy to find: ports and adapters (providers, repositories, the rate limiter and the text extractors are interfaces; Gemini, the mock and Drizzle are adapters), strategy (the provider, the context selection, the extractor per file type), a retry decorator, a prompt registry, and a composition root ([`container.ts`](src/server/container.ts)) that is the only place concrete classes are chosen.
+Patterns, named so they are easy to find: ports and adapters (providers, repositories, the rate limiter and the text extractors are interfaces; Gemini, the mock and Drizzle are adapters), strategy (the provider, the context selection, the extractor per file type), a retry decorator, a prompt registry, and a composition root ([`container.ts`](src/server/container.ts)) that wires the services and repositories (the provider is chosen in `providers/factory.ts` and the extractor per file type in `extractors/index.ts`).
 
 ### One question, step by step
 
@@ -159,8 +160,9 @@ sequenceDiagram
   C->>P: rate limit, then reserve tokens (advisory lock)
   C->>P: store the question
   R-->>B: accepted
+  R-->>B: status retrieving
   C->>P: retrieve top chunks, or take the whole document
-  R-->>B: status retrieving, then generating
+  R-->>B: status generating
   C->>G: stream a JSON answer
   G-->>C: tokens
   C-->>B: delta events (the answer text only)
@@ -193,7 +195,7 @@ infra/terraform/    the AWS module and its tests
 
 ### Decisions
 
-1. **Next.js as the HTTP layer over a framework-agnostic core.** One deployable serves the UI and the API, and the core could move behind Fastify or Lambda handlers unchanged. The cost is that the API and the UI scale together.
+1. **Next.js as the HTTP layer over a framework-agnostic core.** One deployable serves the UI and the API, and the core could move behind Fastify or Lambda handlers with the `server-only` guard stubbed, as the tests and scripts already do. The cost is that the API and the UI scale together.
 2. **PostgreSQL with pgvector, exact search, one database.** Every search is narrowed to one document and one owner, so exact search is fast with perfect recall, and one database means one backup and one security boundary. A dedicated vector store earns its place for cross-document search at scale.
 3. **Drizzle and plain SQL migrations.** Typed queries with no hidden magic, and a migration that enables the extension is just a SQL file.
 4. **My own provider ports, not LangChain or an AI SDK.** The surface is small (stream text, report usage, normalise errors), and I need direct control of retries, aborts, cost accounting and tests.
@@ -203,7 +205,7 @@ infra/terraform/    the AWS module and its tests
 8. **JWT in an HttpOnly cookie.** Stateless, safe from script access, and no token in any response body. The cost is that it cannot be revoked before it expires.
 9. **The mock provider is a first-class adapter.** The demo, the tests and CI run without a key, and its citations really verify.
 10. **Terraform validated and tested, never applied, on ECS Fargate.** It meets the infrastructure requirement without an AWS account. Fargate suits long-lived I/O-bound streams with the least operational weight.
-11. **Migrations and the purge are separate tasks, and the app runs as a login with no schema rights.** A bug or an injection in the app cannot alter the schema.
+11. **Migrations and the purge are separate tasks, and in AWS the app runs as a login with no schema rights.** A bug or an injection in the app cannot alter the schema there. Locally, Compose connects as its bootstrap `app` user.
 
 ## AI design choices
 
@@ -247,8 +249,8 @@ Layered, because no single filter prevents prompt injection:
 
 1. Untrusted text is **data**: nonce-tagged blocks, with the question last.
 2. The reply is **schema-constrained**, answers render as **plain text** (no HTML or Markdown), and the model has **no tools and no secrets**. It sees only the asking user's own document.
-3. Input is **sanitised**: Unicode tag characters (a channel for hidden instructions), bidirectional controls, zero-width characters and control characters are stripped.
-4. A **heuristic detector** ([`injection-detector.ts`](src/server/ai/guardrails/injection-detector.ts)) scores questions, uploads and retrieved chunks for override phrases, prompt-extraction requests, role impersonation, delimiter spoofing and exfiltration URLs in English, Spanish and Portuguese, after folding case, accents, width and look-alike letters. It logs signal names only. It flags by default; `INJECTION_POLICY=block` rejects high-risk questions with a 422.
+3. Input is **sanitised**: Unicode tag characters (a channel for hidden instructions), bidirectional controls, zero-width spaces and other invisible characters (not the joiners that real scripts and emoji need) and control characters are stripped.
+4. A **heuristic detector** ([`injection-detector.ts`](src/server/ai/guardrails/injection-detector.ts)) scores questions, uploads and retrieved chunks for override phrases and prompt-extraction requests (in English, Spanish and Portuguese) and for role impersonation, delimiter spoofing, jailbreak phrases and exfiltration URLs (in English), after folding case, accents, width and look-alike letters. It logs signal names only. It flags by default; `INJECTION_POLICY=block` rejects high-risk questions with a 422.
 5. A provider safety stop becomes a plain **declined** outcome.
 6. **Quotes are verified**, so an injected falsehood tends to surface as an unverified claim.
 
@@ -258,7 +260,7 @@ Layered, because no single filter prevents prompt injection:
 
 ### Evaluation
 
-`npm run eval` scores 28 golden questions through the real pipeline: retrieval hit rate and MRR (measured on the retriever alone), quotes verified and attributed to the right passage, facts present (whole-token matching), refusals, and a planted prompt injection whose canary must appear nowhere. A case passes only if every check passes, a committed baseline fails the build when any single case regresses, and the harness itself is tested against models that are wrong in one chosen way. CI uses the offline mock, so it checks the plumbing; a weekly workflow runs the real model when a key is configured.
+`npm run eval` scores 28 golden questions through the real services over in-memory stores: retrieval hit rate and MRR (measured on the retriever alone), quotes verified and attributed to the right passage, facts present (whole-token matching), refusals, and a planted prompt injection whose canary must appear nowhere. A case passes only if every check passes, a committed baseline fails the build when any single case regresses, and the harness itself is tested against models that are wrong in one chosen way. CI uses the offline mock, so it checks the plumbing; a weekly workflow runs the real model when a key is configured.
 
 ## Trade-offs and known limitations
 
@@ -266,7 +268,7 @@ Layered, because no single filter prevents prompt injection:
 - **CI's evaluation checks plumbing, not quality.** It uses an offline extractive model.
 - **Verified citations do not make an answer true.** They show a quote exists in the cited text.
 - **Stop does not stop provider billing.** The SDK's abort is client-side only; cancelled requests are recorded with an estimate.
-- **The injection detector is a heuristic** for three languages and is never the only defence.
+- **The injection detector is a heuristic,** English for every signal and Spanish and Portuguese only for override and prompt-extraction phrases, and is never the only defence.
 - **Scanned PDFs are refused,** there is no OCR, and tables and columns extract poorly.
 - **Ingestion is synchronous and in-process,** bounded by caps; a queue and worker are the fix.
 - **Sessions cannot be revoked before they expire,** and there are no refresh tokens, email verification, password reset or account deletion.
