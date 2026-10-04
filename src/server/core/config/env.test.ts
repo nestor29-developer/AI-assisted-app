@@ -225,8 +225,29 @@ describe('loadMigrationConfig', () => {
     ['an upper-case name', { ...role, APP_DB_USER: 'App_RW' }, /APP_DB_USER/],
     ['a name that is not an identifier', { ...role, APP_DB_USER: 'app"; drop' }, /APP_DB_USER/],
     ['a short password', { ...role, APP_DB_PASSWORD: 'short' }, /APP_DB_PASSWORD/],
+    [
+      'a password with accents',
+      { ...role, APP_DB_PASSWORD: 'una-contraseña-larga-123' },
+      /APP_DB_PASSWORD: must use printable ASCII/,
+    ],
+    [
+      'a password with a line break',
+      { ...role, APP_DB_PASSWORD: 'a-long-enough\npassword' },
+      /APP_DB_PASSWORD: must use printable ASCII/,
+    ],
   ])('rejects %s', (_label, bad, message) => {
     expect(() => loadMigrationConfig({ ...database, ...bad })).toThrow(message);
+  });
+
+  it('accepts a password made of any printable ASCII, spaces and quotes included', () => {
+    const password = `A b"c'd\\e!~ ${'x'.repeat(12)}`;
+
+    expect(
+      loadMigrationConfig({ ...database, ...role, APP_DB_PASSWORD: password }).appRole,
+    ).toEqual({
+      username: 'app_rw',
+      password,
+    });
   });
 
   it('still insists on a database', () => {

@@ -12,12 +12,14 @@ async function main(): Promise<void> {
   const { database, appRole } = loadMigrationConfig(process.env);
   const pool = createPool(database, { logger, statementTimeoutMs: 0 });
   try {
-    await runMigrations(pool, resolve('drizzle'));
-    logger.info('migrations applied');
-    if (appRole) {
-      await provisionAppRole(pool, appRole);
-      logger.info({ role: appRole.username }, 'application role provisioned');
-    }
+    await runMigrations(pool, resolve('drizzle'), {
+      afterwards: async () => {
+        logger.info('migrations applied');
+        if (!appRole) return;
+        await provisionAppRole(pool, appRole);
+        logger.info({ role: appRole.username }, 'application role provisioned');
+      },
+    });
   } finally {
     await pool.end();
   }

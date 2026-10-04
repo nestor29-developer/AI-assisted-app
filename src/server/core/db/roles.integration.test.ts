@@ -160,7 +160,7 @@ describe('provisionAppRole (real Postgres)', () => {
 
     await expect(
       provisionAppRole(database.pool, { username: name, password: randomPassword() }),
-    ).rejects.toThrow(/superuser/);
+    ).rejects.toThrow(/SUPERUSER/);
     const { rows } = await database.pool.query('select rolsuper from pg_roles where rolname = $1', [
       name,
     ]);

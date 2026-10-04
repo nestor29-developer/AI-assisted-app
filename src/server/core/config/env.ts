@@ -259,7 +259,11 @@ const appRoleEnvSchema = z.object({
     .string()
     .regex(APP_ROLE_NAME, 'must be a lower-case Postgres role name')
     .optional(),
-  APP_DB_PASSWORD: z.string().min(16, 'must be at least 16 characters').optional(),
+  APP_DB_PASSWORD: z
+    .string()
+    .min(16, 'must be at least 16 characters')
+    .regex(/^[\x20-\x7e]+$/, 'must use printable ASCII characters only')
+    .optional(),
 });
 
 export interface MigrationConfig {
