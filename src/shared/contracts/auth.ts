@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-export const emailSchema = z.string().trim().toLowerCase().pipe(z.email().max(254));
+export const emailSchema = z
+  .string()
+  .trim()
+  .min(1, 'Enter your email address.')
+  .toLowerCase()
+  .pipe(z.email('Enter a valid email address.').max(254, 'Use at most 254 characters.'));
 
 export const registerRequestSchema = z.object({
   email: emailSchema,

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Button } from './button';
+import { Button, buttonClass } from './button';
 
 describe('Button', () => {
   it('stays focusable while loading, so Chrome does not drop focus to the page', async () => {
@@ -90,5 +90,16 @@ describe('Button', () => {
     );
 
     for (const button of screen.getAllByRole('button')) expect(button).toHaveClass('border');
+  });
+
+  it('gives each variant exactly one border colour, since the stylesheet would pick between two', () => {
+    const colours = (variant: 'primary' | 'secondary' | 'danger') =>
+      buttonClass({ variant })
+        .split(/\s+/)
+        .filter((name) => /^border-(transparent|slate-|red-|indigo-)/.test(name));
+
+    expect(colours('primary')).toEqual(['border-transparent']);
+    expect(colours('secondary')).toEqual(['border-slate-300']);
+    expect(colours('danger')).toEqual(['border-red-300']);
   });
 });
