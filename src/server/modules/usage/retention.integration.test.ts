@@ -245,6 +245,8 @@ describe('RetentionService (real Postgres)', () => {
       documentsDeleted: 0,
       aiRequestsDeleted: 0,
       rateLimitWindowsDeleted: 0,
+      truncated: [],
+      failed: [],
     });
   });
 });

@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gt, sql } from 'drizzle-orm';
 
 import type { Database } from '@/server/core/db/client';
 import { documentChunks, documents } from '@/server/core/db/schema';
@@ -35,8 +35,9 @@ export interface NewChunk {
 export interface DocumentRepository {
   /** Document and chunks are stored together or not at all. */
   createWithChunks(document: NewDocument, chunks: readonly NewChunk[]): Promise<DocumentRecord>;
-  /** Metadata only: the extracted text can be hundreds of KB and no read path needs it. */
+  /** Metadata only: the extracted text can be hundreds of KB and no read path needs it. Null once expired. */
   findById(userId: string, id: string): Promise<DocumentSummaryRecord | null>;
+  /** Without the expired ones: the purge removes them later, but they are gone for the owner at once. */
   listByUser(userId: string): Promise<DocumentSummaryRecord[]>;
   /** Returns false when the document does not exist or belongs to someone else. */
   delete(userId: string, id: string): Promise<boolean>;
@@ -60,6 +61,9 @@ const summaryColumns = {
   createdAt: documents.createdAt,
   expiresAt: documents.expiresAt,
 };
+
+/** Database time, like the purge's: an app server with a slow clock cannot keep a document alive. */
+const notExpired = gt(documents.expiresAt, sql`now()`);
 
 export class DrizzleDocumentRepository implements DocumentRepository {
   constructor(private readonly db: Database) {}
@@ -96,7 +100,7 @@ export class DrizzleDocumentRepository implements DocumentRepository {
     const [row] = await this.db
       .select(summaryColumns)
       .from(documents)
-      .where(and(eq(documents.id, id), eq(documents.userId, userId)))
+      .where(and(eq(documents.id, id), eq(documents.userId, userId), notExpired))
       .limit(1);
     return row ?? null;
   }
@@ -105,7 +109,7 @@ export class DrizzleDocumentRepository implements DocumentRepository {
     return this.db
       .select(summaryColumns)
       .from(documents)
-      .where(eq(documents.userId, userId))
+      .where(and(eq(documents.userId, userId), notExpired))
       .orderBy(desc(documents.createdAt));
   }
 

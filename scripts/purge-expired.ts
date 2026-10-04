@@ -8,7 +8,10 @@ import { DrizzleAiRequestRepository } from '@/server/modules/usage/ai-request.re
 import { RetentionService } from '@/server/modules/usage/retention.service';
 import { staleAfterSeconds } from '@/server/modules/usage/usage.service';
 
+/** Keeps each delete well under a second; a document takes its chunks and messages with it. */
 const BATCH_SIZE = 500;
+/** Rest between batches, so a large backlog leaves the app's own queries room. */
+const PAUSE_BETWEEN_BATCHES_MS = 100;
 
 /** Run daily by a scheduled task in AWS. Safe at any time, and safe if two runs overlap. */
 async function main(): Promise<void> {
@@ -21,8 +24,20 @@ async function main(): Promise<void> {
       aiRequestRetentionDays: config.aiRequestRetentionDays,
       staleAfterSeconds: staleAfterSeconds(config.llmTimeoutMs),
       batchSize: BATCH_SIZE,
+      pauseBetweenBatchesMs: PAUSE_BETWEEN_BATCHES_MS,
     });
-    logger.info(await service.run(), 'retention purge finished');
+    const result = await service.run();
+    logger.info(result, 'retention purge finished');
+    if (result.truncated.length > 0) {
+      logger.warn(
+        { steps: result.truncated },
+        'purge stopped at the batch limit; the next run carries on',
+      );
+    }
+    if (result.failed.length > 0) {
+      logger.error({ failed: result.failed }, 'purge steps failed');
+      process.exitCode = 1;
+    }
   } finally {
     await pool.end();
   }

@@ -29,6 +29,8 @@ function cosine(a: readonly number[], b: readonly number[]): number {
   return normA === 0 || normB === 0 ? 0 : dot / Math.sqrt(normA * normB);
 }
 
+const hasExpired = (record: DocumentRecord) => record.expiresAt.getTime() <= Date.now();
+
 function toSummary(record: DocumentRecord): DocumentSummaryRecord {
   return {
     id: record.id,
@@ -85,13 +87,13 @@ export class InMemoryDocumentStore implements DocumentRepository, ChunkRepositor
 
   async findById(userId: string, id: string): Promise<DocumentSummaryRecord | null> {
     const record = this.documents.get(id);
-    if (record?.userId !== userId) return null;
+    if (record?.userId !== userId || hasExpired(record)) return null;
     return toSummary(record);
   }
 
   async listByUser(userId: string): Promise<DocumentSummaryRecord[]> {
     return [...this.documents.values()]
-      .filter((record) => record.userId === userId)
+      .filter((record) => record.userId === userId && !hasExpired(record))
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .map(toSummary);
   }

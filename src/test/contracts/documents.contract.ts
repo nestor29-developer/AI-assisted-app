@@ -82,6 +82,22 @@ export function documentStoreContract(name: string, connect: () => Promise<Docum
       expect(await h.documents.findById(h.userA, crypto.randomUUID())).toBeNull();
     });
 
+    it('stops returning a document once it has expired, even before the purge has removed it', async () => {
+      const expired = await h.documents.createWithChunks(
+        { ...newDocument(h.userA, 'expired'), expiresAt: new Date(Date.now() - 1_000) },
+        [chunk(0, vector(0))],
+      );
+      const live = await h.documents.createWithChunks(newDocument(h.userA, 'still live'), [
+        chunk(0, vector(0)),
+      ]);
+
+      expect(await h.documents.findById(h.userA, expired.id)).toBeNull();
+      expect(await h.documents.findById(h.userA, live.id)).not.toBeNull();
+      const ids = (await h.documents.listByUser(h.userA)).map((d) => d.id);
+      expect(ids).toContain(live.id);
+      expect(ids).not.toContain(expired.id);
+    });
+
     it('lists only the owner’s documents, newest first, without the extracted text', async () => {
       const first = await h.documents.createWithChunks(newDocument(h.userA, 'older'), [
         chunk(0, vector(0)),

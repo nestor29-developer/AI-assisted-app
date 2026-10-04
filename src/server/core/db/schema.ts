@@ -175,6 +175,6 @@ export const rateLimitWindows = pgTable(
     windowStart: timestamptz('window_start').notNull(),
     count: integer('count').notNull(),
   },
-  // window_start leads, so deleting expired windows is a range scan and inserts hit the newest pages.
+  // window_start leads, so the purge finds old windows by an index range, and new rows land on the newest pages.
   (t) => [primaryKey({ columns: [t.windowStart, t.key] })],
 );
