@@ -14,14 +14,19 @@ FROM deps AS builder
 COPY . .
 RUN npm run build
 
-# One-off task that applies SQL migrations (locally via compose, in AWS as a task before deploy).
-FROM deps AS migrator
+# The one-off tasks are bundled to plain JavaScript: tsx needs a writable temp directory, node does not.
+FROM deps AS tasks
 COPY tsconfig.json ./
 COPY src ./src
 COPY scripts ./scripts
+RUN npm run build:tasks
+
+# Migrations and the retention purge, locally via compose and in AWS as ECS tasks. No node_modules, no TypeScript.
+FROM base AS migrator
+COPY --from=tasks /app/dist/tasks ./dist/tasks
 COPY drizzle ./drizzle
 USER node
-CMD ["node_modules/.bin/tsx", "--conditions=react-server", "scripts/migrate.ts"]
+CMD ["node", "--enable-source-maps", "dist/tasks/migrate.cjs"]
 
 FROM base AS runner
 ARG APP_VERSION=dev

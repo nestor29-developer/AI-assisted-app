@@ -30,6 +30,12 @@ services:
       db:
         condition: service_healthy
     restart: 'no'
+    # Run the way ECS runs it: nothing writable but /tmp, which a Fargate volume makes root-owned.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    init: true
+    tmpfs: ['/tmp:mode=0755']
 
   app:
     profiles: ['full']
@@ -54,6 +60,11 @@ services:
       MOCK_LLM_CHUNK_DELAY_MS: ${MOCK_LLM_CHUNK_DELAY_MS:-}
     ports:
       - '127.0.0.1:${APP_HOST_PORT:-3000}:3000'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    init: true
+    tmpfs: ['/tmp:mode=0755']
 
 volumes:
   pgdata:

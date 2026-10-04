@@ -179,7 +179,7 @@ resource "aws_ecs_task_definition" "purge" {
     merge(local.container_hardening, {
       name    = "purge"
       image   = "${aws_ecr_repository.this["migrator"].repository_url}:${local.migrator_tag}"
-      command = ["node_modules/.bin/tsx", "--conditions=react-server", "scripts/purge-expired.ts"]
+      command = ["node", "--enable-source-maps", "dist/tasks/purge-expired.cjs"]
 
       environment = concat(local.database_environment, [
         { name = "PGUSER", value = var.app_db_user },
