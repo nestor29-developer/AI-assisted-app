@@ -50,6 +50,8 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gemini-3.8-flash}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Empty means the default; raise it (milliseconds per chunk) to watch the stages and try Stop.
+      MOCK_LLM_CHUNK_DELAY_MS: ${MOCK_LLM_CHUNK_DELAY_MS:-}
     ports:
       - '127.0.0.1:${APP_HOST_PORT:-3000}:3000'
 

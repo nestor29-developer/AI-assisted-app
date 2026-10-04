@@ -23,7 +23,7 @@ npm run db:migrate              # applies ./drizzle (enables pgvector, creates t
 npm run dev                     # http://localhost:3000
 ```
 
-Port 3000 or 5432 already taken? Set `APP_ORIGIN` to the URL you actually open (cookies and the cross-site check depend on it), and `DB_HOST_PORT` for Postgres.
+Port 3000 or 5432 already taken? Run the app on another port with `PORT=3100 APP_ORIGIN=http://localhost:3100 npm run dev` (`APP_ORIGIN` must be the URL you actually open, because cookies and the cross-site check depend on it), and set `DB_HOST_PORT` for Postgres.
 
 Every setting is an environment variable, checked at boot by [`env.ts`](src/server/core/config/env.ts), which also holds the defaults; [`.env.example`](.env.example) lists the ones worth changing locally.
 
@@ -31,9 +31,9 @@ Every setting is an environment variable, checked at boot by [`env.ts`](src/serv
 
 1. Open http://localhost:3000 and create an account.
 2. Add a document: paste text, or upload [`evals/fixtures/handbook.md`](evals/fixtures/handbook.md) (a fictional 13 KB handbook, big enough to need retrieval) or [`scripts/fixtures/sample-policy.pdf`](scripts/fixtures/sample-policy.pdf) (three pages, so citations show page numbers).
-3. Ask "How many vacation days do I earn per month?" and open the `[S1]` marker. Then ask something the document does not cover ("Do employees get stock options?") and see the "not found" state.
+3. Ask "How many vacation days do I earn per month?" and open the `[S1]` marker. Then ask something unrelated ("What is the capital of France?") and see the "not found" state.
 
-The mock model is extractive: it answers with the best-matching sentence, so its quotes really verify, but it cannot paraphrase or reason. To watch the stages and the Stop button, slow it down with `MOCK_LLM_CHUNK_DELAY_MS=300` in `.env`.
+The mock model is extractive: it answers with the best-matching sentence, so its quotes really verify, but it cannot paraphrase or reason. It also answers an off-topic question with an unrelated sentence whenever a single word overlaps (try "Who founded the company?"), and the badge then still says the quote was verified. That is why "verified" is worded narrowly: the quote exists in the text, which is not the same as the answer being true. A real model is expected to decline such questions, and the `not_found` cases of `npm run eval -- --provider gemini` measure that. To watch the stages and the Stop button, slow the mock down with `MOCK_LLM_CHUNK_DELAY_MS=300` in `.env`.
 
 ### Using the real model (Gemini)
 
