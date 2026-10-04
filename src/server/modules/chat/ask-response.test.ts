@@ -83,6 +83,48 @@ describe('askResponse: streaming clients', () => {
   });
 });
 
+describe('askResponse: a client that left before the first event', () => {
+  it('cancels the upstream work and lets the generator clean up, instead of leaking its reservation', async () => {
+    const clientGone = new AbortController();
+    clientGone.abort();
+    let cleanedUp = false;
+    async function* source(): AsyncGenerator<AskEvent> {
+      try {
+        yield accepted;
+        yield { type: 'final', message };
+      } finally {
+        cleanedUp = true;
+      }
+    }
+    const { promise, controller } = call(source(), 'text/event-stream', clientGone.signal);
+
+    const response = await promise;
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(cleanedUp).toBe(true);
+    expect(response.status).toBe(499);
+  });
+
+  it('does the same for a plain JSON client', async () => {
+    const clientGone = new AbortController();
+    clientGone.abort();
+    let cleanedUp = false;
+    async function* source(): AsyncGenerator<AskEvent> {
+      try {
+        yield accepted;
+        yield { type: 'final', message };
+      } finally {
+        cleanedUp = true;
+      }
+    }
+
+    const { promise } = call(source(), undefined, clientGone.signal);
+
+    expect((await promise).status).toBe(499);
+    expect(cleanedUp).toBe(true);
+  });
+});
+
 describe('askResponse: plain JSON clients', () => {
   it('waits for the final message and returns it as JSON', async () => {
     const { promise } = call(

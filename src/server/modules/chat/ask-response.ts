@@ -24,6 +24,13 @@ export async function askResponse({
   const first = await events.next();
   if (first.done) throw new InternalError(new Error('The ask stream ended without any event'));
 
+  // An abort that happened while the checks ran never fires again: close the generator so it settles its reservation.
+  if (request.signal.aborted) {
+    controller.abort();
+    await events.return(undefined);
+    return new Response(null, { status: 499 });
+  }
+
   const onClientGone = () => controller.abort();
   request.signal.addEventListener('abort', onClientGone, { once: true });
 

@@ -207,3 +207,72 @@ describe('streamAnswer', () => {
     await expect(consume()).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
+
+describe('streamAnswer: a stream from a newer or misbehaving server', () => {
+  const drain = async (text: string) => {
+    stubFetch(sse(streamOf(text)));
+    const received: AskEvent[] = [];
+    const consume = async () => {
+      for await (const event of streamAnswer('d', 'q')) received.push(event);
+    };
+    return { received, consume };
+  };
+  const frameOf = (type: string, payload: unknown) =>
+    `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`;
+
+  it('skips an event type it has never heard of and keeps going', async () => {
+    const text = `${frame(EVENTS[0]!)}${frameOf('reasoning', { type: 'reasoning', text: 'hmm' })}${frame(EVENTS[5]!)}`;
+    const { received, consume } = await drain(text);
+
+    await consume();
+
+    expect(received).toEqual([EVENTS[0], EVENTS[5]]);
+  });
+
+  it('ignores fields it does not know, a bad retry hint and an empty event', async () => {
+    const text = `foo: bar\nretry: soon\n${frame(EVENTS[0]!)}event: nothing\ndata:\n\n${frame(EVENTS[5]!)}`;
+    const { received, consume } = await drain(text);
+
+    await consume();
+
+    expect(received).toEqual([EVENTS[0], EVENTS[5]]);
+  });
+
+  it('skips a progress hint it cannot read, but not an outcome it cannot read', async () => {
+    const hint = frameOf('status', { type: 'status', phase: 'thinking-harder' });
+    const lenient = await drain(`${frame(EVENTS[0]!)}${hint}${frame(EVENTS[5]!)}`);
+    await lenient.consume();
+    expect(lenient.received).toEqual([EVENTS[0], EVENTS[5]]);
+
+    const strict = await drain(
+      `${frame(EVENTS[0]!)}${frameOf('final', { type: 'final', message: { id: 'x' } })}`,
+    );
+    await expect(strict.consume()).rejects.toMatchObject({ code: 'UNEXPECTED_RESPONSE' });
+    expect(strict.received).toEqual([EVENTS[0]]);
+  });
+
+  it('keeps the reason when it gives up: the parse error is attached as the cause', async () => {
+    const notJson = await drain('event: delta\ndata: not json\n\n');
+    const error = await notJson.consume().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).cause).toBeInstanceOf(SyntaxError);
+
+    const wrongShape = await drain(frameOf('final', { type: 'final', message: {} }));
+    const shapeError = await wrongShape.consume().catch((e: unknown) => e);
+    expect((shapeError as ApiError).cause).toBeInstanceOf(Error);
+  });
+
+  it('fails on an event that has no type at all', async () => {
+    const { consume } = await drain('data: {"hello":1}\n\n');
+
+    await expect(consume()).rejects.toMatchObject({ code: 'UNEXPECTED_RESPONSE' });
+  });
+
+  it('refuses a stream that is far bigger than any real answer, even in a single chunk', async () => {
+    const huge = frameOf('delta', { type: 'delta', text: 'x'.repeat(600_000) });
+    const { received, consume } = await drain(huge);
+
+    await expect(consume()).rejects.toMatchObject({ code: 'UNEXPECTED_RESPONSE' });
+    expect(received).toEqual([]);
+  });
+});

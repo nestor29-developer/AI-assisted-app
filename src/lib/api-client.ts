@@ -11,8 +11,9 @@ export class ApiError extends Error {
     message: string,
     readonly retryAfterSeconds?: number,
     readonly issues: readonly ValidationIssue[] = [],
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, cause === undefined ? undefined : { cause });
     this.name = 'ApiError';
   }
 }

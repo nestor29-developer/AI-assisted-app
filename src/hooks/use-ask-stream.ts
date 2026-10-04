@@ -45,12 +45,19 @@ export function useAskStream(documentId: string) {
   const latestExchange = useRef(0);
 
   const addToThread = useCallback(
-    (message: MessageDto) =>
-      queryClient.setQueryData<MessageDto[]>(
-        queryKeys.messages(documentId),
-        (messages) =>
-          messages && [...messages.filter((existing) => existing.id !== message.id), message],
-      ),
+    async (message: MessageDto) => {
+      const key = queryKeys.messages(documentId);
+      // A refetch still in flight (the poll after a Stop) would otherwise land after this and wipe it.
+      await queryClient.cancelQueries({ queryKey: key });
+      if (queryClient.getQueryData(key) === undefined) {
+        await queryClient.invalidateQueries({ queryKey: key });
+        return;
+      }
+      queryClient.setQueryData<MessageDto[]>(key, (messages = []) => [
+        ...messages.filter((existing) => existing.id !== message.id),
+        message,
+      ]);
+    },
     [documentId, queryClient],
   );
 
@@ -64,19 +71,23 @@ export function useAskStream(documentId: string) {
 
       let userMessageId: string | null = null;
       let completed = false;
+      let finished = false;
       let stopped = false;
       try {
         for await (const event of streamAnswer(documentId, question, controller.signal)) {
-          dispatch({ type: 'event', event });
+          // The thread is updated first, so the state never describes a message the thread lacks.
           if (event.type === 'accepted') {
             userMessageId = event.userMessage.id;
-            addToThread(event.userMessage);
+            await addToThread(event.userMessage);
           } else if (event.type === 'final') {
             completed = true;
-            addToThread(event.message);
+            await addToThread(event.message);
           }
+          if (event.type === 'final' || event.type === 'error') finished = true;
+          dispatch({ type: 'event', event });
         }
-        if (!completed && userMessageId === null) throw LOST_CONNECTION;
+        // A stream that closes with neither outcome (a proxy timeout, a crash) must not leave "Writing..." up.
+        if (!finished) throw LOST_CONNECTION;
       } catch (error) {
         if (isAbortError(error)) {
           stopped = true;
@@ -95,7 +106,14 @@ export function useAskStream(documentId: string) {
       const clearOverlay = () => {
         if (latestExchange.current === exchange) dispatch({ type: 'reset' });
       };
-      if (completed || (stopped && userMessageId === null)) return clearOverlay();
+      if (completed) return clearOverlay();
+      if (stopped && userMessageId === null) {
+        clearOverlay();
+        // The server may still have stored the question and a stopped reply after we gave up waiting.
+        await sleep(STORED_REPLY_DELAY_MS);
+        await queryClient.invalidateQueries({ queryKey: queryKeys.messages(documentId) });
+        return;
+      }
       // A refusal before anything was stored leaves no trace but its message, which stays on screen.
       if (userMessageId === null) return;
       // A failed or stopped reply is stored too. Until it shows up the overlay stands in for it.

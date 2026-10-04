@@ -69,7 +69,35 @@ export const messageSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 
-export const messageListResponseSchema = z.object({ messages: z.array(messageSchema) });
+const UNREADABLE_MESSAGE = 'This message could not be displayed.';
+
+/** A stored message this client cannot parse (say a warning from a newer server) becomes a placeholder. */
+function placeholderFor(raw: unknown): MessageDto | null {
+  const identity = z
+    .object({ id: z.uuid(), role: z.enum(['user', 'assistant']), createdAt: z.iso.datetime() })
+    .safeParse(raw);
+  if (!identity.success) return null;
+  return {
+    ...identity.data,
+    content: UNREADABLE_MESSAGE,
+    answer: null,
+    status: 'failed',
+    errorCode: null,
+    feedback: null,
+  };
+}
+
+export const messageListResponseSchema = z.object({
+  messages: z.array(z.unknown()).transform((items): MessageDto[] =>
+    items.flatMap((raw) => {
+      const message = messageSchema.safeParse(raw);
+      const shown = message.success ? message.data : placeholderFor(raw);
+      return shown ? [shown] : [];
+    }),
+  ),
+});
+export type MessageDto = z.infer<typeof messageSchema>;
+
 export const messageResponseSchema = z.object({ message: messageSchema });
 
 export const feedbackRequestSchema = z.object({
@@ -78,5 +106,4 @@ export const feedbackRequestSchema = z.object({
 });
 
 export type AssistantAnswer = z.infer<typeof assistantAnswerSchema>;
-export type MessageDto = z.infer<typeof messageSchema>;
 export type FeedbackRequest = z.output<typeof feedbackRequestSchema>;
