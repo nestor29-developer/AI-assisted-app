@@ -9,8 +9,14 @@ import type { Grounding, LlmEvent, LlmProvider, LlmRequest } from './types';
 
 const MAX_QUOTE_WORDS = 25;
 const STRONG_MATCH_RATIO = 0.5;
-/** Asking for the gist shares no words with the document, so it is answered from the opening. */
+/** A request for the gist is answered from the opening, unless it also names something in the text. */
 const SUMMARY_REQUEST = /summar|main points|key points|overview|what is this (document )?about/i;
+/** Words that only shape such a request; a planted note saying "this document" must not win on them. */
+const REQUEST_WORDS = new Set(
+  significantTokens(
+    'summarize summarise summary document text few brief short sentences main key points overview about give',
+  ),
+);
 const SUMMARY_SENTENCES = 3;
 const SENTENCE_END = /[.!?。！？]["')\]]?$/u;
 const SUMMARY_FOLLOW_UPS = ['Which dates or deadlines does it mention?'];
@@ -44,7 +50,10 @@ export interface MockLlmOptions {
 
 /** Keys are in the real schema's order (answer, citations, status, follow-ups), so streaming behaves the same. */
 function buildAnswer({ question, sources }: Grounding): AnswerPayload {
-  const questionTokens = new Set(significantTokens(question));
+  const summaryRequest = SUMMARY_REQUEST.test(question);
+  const questionTokens = new Set(
+    significantTokens(question).filter((token) => !(summaryRequest && REQUEST_WORDS.has(token))),
+  );
   let best: { sourceId: string; sentence: string; score: number } | undefined;
 
   for (const source of sources) {
@@ -56,7 +65,7 @@ function buildAnswer({ question, sources }: Grounding): AnswerPayload {
   }
 
   if (!best || best.score === 0) {
-    const summary = SUMMARY_REQUEST.test(question) ? summarize(sources) : null;
+    const summary = summaryRequest ? summarize(sources) : null;
     return (
       summary ?? {
         answer: "I couldn't find that in this document.",
