@@ -4,7 +4,7 @@ Ask questions about your documents and get answers you can check. The model is t
 
 Built for the Full Stack AI Engineer assessment with Next.js and TypeScript, PostgreSQL with pgvector, Gemini, and AWS infrastructure as validated Terraform. It runs end to end with **no API key**, on an offline mock model.
 
-**Contents:** [Run it locally](#run-it-locally) · [Architecture decisions](#architecture-decisions) · [AI design choices](#ai-design-choices) · [Trade-offs and known limitations](#trade-offs-and-known-limitations)
+**Contents:** [Run it locally](#run-it-locally) · [Architecture decisions](#architecture-decisions) · [AI design choices](#ai-design-choices) · [Data, reliability and operations](#data-reliability-and-operations) · [Trade-offs and known limitations](#trade-offs-and-known-limitations)
 
 > **Status.** No Gemini API key was available, so the app was built and tested on the mock model, and the Gemini adapter is checked only against the SDK's types and stubbed clients. [Two commands](#using-the-real-model-gemini) measure the real model once a key exists.
 
@@ -222,6 +222,19 @@ Layered, because no single filter stops prompt injection:
 ### Evaluation
 
 `npm run eval` runs 28 golden questions through the real services over in-memory stores. It scores retrieval (hit rate, MRR), quotes (verified, from the right passage), facts, refusals, and a planted injection whose canary must never appear. A case passes only if every check passes, and CI fails when a case that passed before stops passing. CI uses the mock, so it checks the plumbing; a weekly workflow runs the real model when a key is configured.
+
+## Data, reliability and operations
+
+- **Stored vs not:** the email and password hash, the extracted text with its chunks and embeddings, questions and answers, and metadata about each AI call are stored. Original files, assembled prompts, model reasoning and API keys are not.
+- **Retention:** documents and conversations last 30 days or until deleted, AI-call metadata 90 days. Expired documents are hidden at once and a daily job deletes them.
+- **PII:** the email is the only personal data asked for, and client IPs are kept for a day as rate-limit keys. Every query is scoped to its owner, and in AWS data is encrypted at rest and in transit.
+- **Logging:** structured JSON with ids, status and timings, never document or answer text, with secrets redacted.
+- **Auditability:** every question and every document ingestion leaves a row with the user, model, prompt and app version, retrieved chunks, tokens, cost and outcome.
+- **Costs and rate limits:** per user, 10 questions a minute, 20 uploads an hour, 200,000 tokens a day (reserved before each call) and 2 live streams, enforced in PostgreSQL. Per request, a 4,096-token output cap and at most six chunks.
+- **Wrong answers in production:** users rate each answer, and its AI-call row shows the model, prompt version and retrieved chunks, so the case can be reproduced, fixed and added to the golden set before the eval gate runs again. Prompt and model are configuration, so a rollback is one variable.
+- **API keys:** in AWS Secrets Manager, injected when a task starts; locally in `.env`, which is gitignored. To rotate, add a new key, update the secret, force a new ECS deployment, then revoke the old key.
+- **Bursty usage:** the provider's quota runs out before CPU does, so per-user limits come first, then ECS autoscaling (2 to 10 tasks) and 429s with `Retry-After`. Retries never fire after the first token.
+- **Scaling constraints specific to AI:** streams stay open for seconds, the provider quota is per project, cost follows tokens rather than requests, and CPU is a poor scaling signal.
 
 ## Trade-offs and known limitations
 
