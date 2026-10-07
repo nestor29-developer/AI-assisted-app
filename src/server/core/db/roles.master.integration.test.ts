@@ -85,6 +85,10 @@ describe('provisionAppRole as a master that is not a superuser (real Postgres)',
     );
     await run(admin, 'create database %I owner %I', scratch, master);
     asMaster = new Pool({ connectionString: urlFor(master, masterPassword, scratch) });
+    // end() resolves before its sockets close, so the forced drop in afterAll can end one (57P01).
+    asMaster.on('error', (error) => {
+      if ((error as { code?: string }).code !== '57P01') throw error;
+    });
     await asMaster.query('create table things (id serial primary key, note text)');
   });
 
