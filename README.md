@@ -10,11 +10,11 @@ Built for the Full Stack AI Engineer assessment with Next.js and TypeScript, Pos
 
 ## Screenshots
 
-From the production build on the offline mock model, so the answer text is the mock's, not Gemini's.
+Real answers from `gemini-3.8-flash`, taken from the production build.
 
 ![The documents page with the sample document filled in and one document listed](docs/images/documents.png)
 
-![An answer with its verified quote, and the source excerpt with that quote highlighted](docs/images/answer.png)
+![An answer with its verified quotes, and a source excerpt with its quote highlighted](docs/images/answer.png)
 
 <img src="docs/images/phone.png" alt="The same answer on a phone-sized screen" width="320">
 
